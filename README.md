@@ -1,5 +1,7 @@
 # ThereModernUI
 
+**[Showcase and live demo](https://kronzy0nbuttons.github.io/ThereModernUI/)** · **[Download the latest release](https://github.com/Kronzy0nButtons/ThereModernUI/releases/latest)**
+
 A replacement addon for the There.com client's original Communicator,
 Compass & Message Bar. The client serves its UI pages (HTML/CSS/JS rendered
 in Edge WebView2) from an embedded local web server, and files placed in the
