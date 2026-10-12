@@ -4160,11 +4160,19 @@ There.init({
       if (!There.data.myThingsMap) {
         There.data.myThingsMap = There.loadMyThingsMap();
       }
+      // hold the big clothing load back a bit. hundreds of requests at login
+      // starve the client's local server and other windows' chat feeds (e.g. the
+      // Command Bar's /commands) can hang for the whole session. opening the
+      // wardrobe still loads it straight away
+      const later = function() {
+        There.setSyncNote('');
+        There.setNamedTimer('clothing-preload', 20000, clothing);
+      };
       if (There.data.myThingsMap && Object.keys(There.data.myThingsMap).length) {
-        clothing();
+        later();
       } else {
         There.setSyncNote('Mapping item actions (first run)…');
-        There.buildMyThingsMap(clothing);
+        There.buildMyThingsMap(later);
       }
     });
   },
@@ -4897,7 +4905,8 @@ There.init({
     // name and type are separate leaf reads
     let items = [];
     let i = 0;
-    const CONCURRENCY = 8;
+    // keep this low, the local server is single threaded and other windows need it too
+    const CONCURRENCY = 2;
     let active = 0;
     let finished = 0;
     const total = oids.length;
