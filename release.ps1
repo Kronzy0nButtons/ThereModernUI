@@ -80,6 +80,8 @@ try {
   # releases have to include GIFs, so the key file must be here
   & (Join-Path $root 'make-keyfile.ps1') -Required
   & (Join-Path $root 'build-installer.ps1')
+  # the showcase demo runs the real dock, keep it in step with this release
+  & (Join-Path $root 'make-demo.ps1')
   $setup = Join-Path $root "dist\ThereModernUI-Setup-$version.exe"
   if (-not (Test-Path $setup)) { throw "Installer not found: $setup" }
   $sha = (Get-FileHash $setup -Algorithm SHA256).Hash

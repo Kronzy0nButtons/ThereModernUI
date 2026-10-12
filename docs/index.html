@@ -102,7 +102,7 @@ h2 { font-size: clamp(24px, 3vw, 32px); margin: 6px 0 10px; letter-spacing: -0.3
 
 /* ---------- live demo: fake world + dock ---------- */
 .stage {
-  position: relative; height: 640px; border-radius: 22px; overflow: hidden;
+  position: relative; height: 760px; border-radius: 22px; overflow: hidden;
   border: 1px solid var(--border-strong);
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
   background:
@@ -113,7 +113,7 @@ h2 { font-size: clamp(24px, 3vw, 32px); margin: 6px 0 10px; letter-spacing: -0.3
 .stage .sea { position: absolute; left: 0; right: 0; top: 40%; height: 7%; background: linear-gradient(180deg, #4aa6d6, #79c3e6); opacity: 0.85; }
 .stage .palm { position: absolute; bottom: 40%; width: 14px; background: linear-gradient(90deg, #6b4a2b, #8a6238); border-radius: 6px; transform-origin: bottom center; }
 .stage .palm::after { content: ''; position: absolute; top: -28px; left: -46px; width: 106px; height: 46px; border-radius: 50%; background: radial-gradient(ellipse at center, #2f8a4a 0 55%, transparent 56%), radial-gradient(ellipse at 20% 60%, #3a9c56 0 40%, transparent 41%); }
-.stage .avatar { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: 64px; height: 150px; }
+.stage .avatar { position: absolute; left: 50%; bottom: 250px; transform: translateX(-50%); width: 64px; height: 150px; }
 .stage .avatar .head { width: 38px; height: 42px; margin: 0 auto; border-radius: 45% 45% 40% 40%; background: #d9a77f; box-shadow: inset 0 8px 0 #3b2a1e; }
 .stage .avatar .body { width: 60px; height: 66px; margin: 2px auto 0; border-radius: 16px 16px 8px 8px; background: #f2f2f2; }
 .stage .avatar .legs { width: 46px; height: 40px; margin: 0 auto; border-radius: 0 0 8px 8px; background: #3a4a6b; }
@@ -121,7 +121,7 @@ h2 { font-size: clamp(24px, 3vw, 32px); margin: 6px 0 10px; letter-spacing: -0.3
 @keyframes bob { 50% { transform: translateX(-50%) translateY(-4px); } }
 
 .bubble {
-  position: absolute; left: 50%; bottom: 312px; transform: translateX(-50%);
+  position: absolute; left: 50%; bottom: 412px; transform: translateX(-50%);
   max-width: 260px; padding: 8px 12px; border-radius: 12px;
   background: #fff8d8; color: #222; font: 600 13px/1.35 'Segoe UI', sans-serif;
   border: 1px solid #c9bb86; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
@@ -138,134 +138,19 @@ h2 { font-size: clamp(24px, 3vw, 32px); margin: 6px 0 10px; letter-spacing: -0.3
 }
 .hud-hint kbd { font: 700 11px 'Segoe UI'; padding: 1px 6px; border-radius: 5px; background: rgba(255, 255, 255, 0.12); color: var(--accent); }
 
-/* the dock */
-.dockroot { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 4; }
-
-.panel {
-  width: 560px; max-width: calc(100vw - 60px);
-  background: var(--panel); border: 1px solid var(--border-strong);
-  border-radius: var(--radius); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-  overflow: hidden; display: none; flex-direction: column;
-  backdrop-filter: blur(6px);
+/* the real dock runs in this frame, on top of the scene */
+.stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; z-index: 4; background: transparent; }
+.note {
+  position: absolute; top: 14px; right: 14px; z-index: 5; max-width: 320px;
+  padding: 7px 12px; border-radius: 10px; font-size: 12.5px;
+  background: rgba(17, 21, 28, 0.85); color: var(--text); border: 1px solid var(--border);
+  opacity: 0; transition: opacity 200ms; pointer-events: none;
 }
-.panel.open { display: flex; animation: pop 160ms ease; }
-@keyframes pop { from { opacity: 0; transform: translateY(8px); } }
-.panelbar { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border); }
-.panelbar .t { font-weight: 700; font-size: 13.5px; }
-.panelbar input {
-  flex: 1; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.07); color: var(--text); font: 12px 'Segoe UI'; outline: none;
-}
-.panelbar input:focus { border-color: var(--accent); }
-.panelbar .x { margin-left: auto; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; color: var(--dim); cursor: pointer; font-size: 13px; }
-.panelbar .x:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
-.pbody { padding: 12px; max-height: 300px; overflow: auto; }
-.pbody::-webkit-scrollbar { width: 8px; }
-.pbody::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 4px; }
-
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
-.card {
-  border-radius: 10px; border: 1px solid var(--border); background: rgba(255, 255, 255, 0.04);
-  padding: 8px; text-align: center; cursor: pointer; font-size: 11px; color: var(--dim);
-}
-.card:hover { border-color: var(--accent); color: var(--text); }
-.card .pic { height: 60px; border-radius: 7px; margin-bottom: 6px; display: grid; place-items: center; color: rgba(255, 255, 255, 0.85); }
-.card .pic .ico { width: 26px; height: 26px; }
-.card.worn { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { padding: 5px 11px; border-radius: 20px; font-size: 12px; background: rgba(255, 255, 255, 0.07); border: 1px solid var(--border); cursor: pointer; }
-.chip:hover { border-color: var(--accent); }
-.chip.fav { border-color: color-mix(in srgb, #fbbf24 60%, transparent); }
-.chip.fav::before { content: '\2605 '; color: #fbbf24; }
-
-.np { display: flex; gap: 12px; align-items: center; }
-.np .art { width: 64px; height: 48px; border-radius: 8px; background: linear-gradient(135deg, #f472b6, #8b5cf6, #38bdf8); }
-.np .meta b { display: block; font-size: 13.5px; }
-.np .meta span { font-size: 12px; color: var(--dim); }
-.tracks { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
-.track { display: flex; justify-content: space-between; padding: 6px 9px; border-radius: 8px; font-size: 12.5px; cursor: pointer; }
-.track:hover, .track.on { background: rgba(255, 255, 255, 0.06); }
-.track.on { color: var(--accent); }
-.track span { color: var(--dim); }
-
-.gifgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; }
-.gif { height: 80px; border-radius: 8px; cursor: pointer; border: 1px solid var(--border); background-size: 300% 300%; animation: shimmer 3s ease infinite paused; display: grid; place-items: center; font-weight: 800; font-size: 13px; color: rgba(255, 255, 255, 0.9); text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
-.gif:hover { animation-play-state: running; border-color: var(--accent); }
-@keyframes shimmer { 50% { background-position: 100% 50%; } }
-.gifcard { display: none; flex-direction: column; align-items: center; gap: 4px; padding: 6px; background: var(--panel); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); }
-.gifcard.show { display: flex; animation: pop 160ms ease; }
-.gifcard .g { width: 200px; height: 120px; border-radius: 8px; background-size: 300% 300%; animation: shimmer 1.4s ease infinite; display: grid; place-items: center; font-weight: 800; color: #fff; font-size: 18px; }
-.gifcard small { color: var(--dim); font-weight: 600; font-size: 11px; }
-
-.foot { display: flex; justify-content: space-between; padding: 6px 12px 8px; font-size: 10.5px; color: var(--dim); border-top: 1px solid var(--border); }
-.foot b { color: var(--text); letter-spacing: 0.3px; }
-
-.setgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 22px; font-size: 12.5px; }
-.setrow { display: flex; justify-content: space-between; align-items: center; }
-.sw { width: 34px; height: 19px; border-radius: 10px; background: rgba(255, 255, 255, 0.15); position: relative; cursor: pointer; transition: background 140ms; }
-.sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: left 140ms; }
-.sw.on { background: var(--accent); }
-.sw.on::after { left: 17px; }
-.swatches { display: flex; gap: 8px; margin: 4px 0 14px; }
-.swatch { width: 24px; height: 24px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
-.swatch.on { border-color: #fff; }
-.sublabel { font-size: 11px; font-weight: 700; color: var(--dim); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
-
-/* the dock pill */
-.dock {
-  background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius);
-  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45); padding: 6px 8px;
-  display: flex; flex-direction: column; backdrop-filter: blur(6px);
-}
-.mini { display: none; align-items: center; gap: 8px; padding: 2px 4px 7px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
-.mini.show { display: flex; }
-.mini .thumb { width: 30px; height: 22px; border-radius: 5px; background: linear-gradient(135deg, #f472b6, #8b5cf6, #38bdf8); flex: none; }
-.mini .tt { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
-.mini .ta { font-size: 9.5px; color: var(--dim); }
-.viz { flex: 1; height: 18px; display: flex; gap: 2px; align-items: center; justify-content: center; overflow: hidden; }
-.viz i { width: 3px; height: 100%; border-radius: 2px; background: linear-gradient(to top, var(--accent), var(--accent-bright)); transform: scaleY(0.12); animation: bar 700ms ease-in-out infinite alternate paused; }
-.mini.playing .viz i { animation-play-state: running; }
-@keyframes bar { 0% { transform: scaleY(0.15); } 40% { transform: scaleY(0.85); } 70% { transform: scaleY(0.35); } 100% { transform: scaleY(1); } }
-.mbtn { width: 22px; height: 22px; padding: 4px; border-radius: 6px; color: var(--dim); cursor: pointer; flex: none; }
-.mbtn:hover { color: var(--text); background: rgba(255, 255, 255, 0.07); }
-
-.keychat { display: none; align-items: center; gap: 8px; padding: 3px 8px 7px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-size: 12px; }
-.keychat.show { display: flex; }
-.keychat .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: pulse 1.2s infinite; }
-.keychat span { margin-left: auto; color: var(--dim); font-size: 11px; }
-@keyframes pulse { 50% { opacity: 0.35; } }
-
-.quick { display: flex; gap: 4px; justify-content: center; padding-bottom: 5px; margin-bottom: 3px; border-bottom: 1px solid var(--border); }
-.slot { width: 28px; height: 28px; border-radius: 7px; border: 1px dashed rgba(255, 255, 255, 0.18); display: grid; place-items: center; font-size: 8.5px; color: var(--dim); cursor: pointer; transition: transform 120ms; }
-.slot.full { border-style: solid; border-color: var(--border-strong); background: rgba(255, 255, 255, 0.06); color: var(--text); }
-.slot.full .ico { width: 14px; height: 14px; }
-.slot.pulse { transform: scale(1.18); border-color: var(--accent); box-shadow: 0 0 12px var(--accent); }
-
-.row { display: flex; align-items: center; gap: 2px; }
-.grab { width: 12px; color: var(--dim); font-size: 10px; text-align: center; letter-spacing: -2px; }
-.compass { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border-strong); position: relative; margin: 0 4px; background: radial-gradient(#1b212b, #10141a); }
-.compass .n { position: absolute; top: 1px; left: 50%; transform: translateX(-50%); font-size: 7px; font-weight: 800; color: #f87171; }
-.compass .needle { position: absolute; left: 50%; top: 4px; width: 2px; height: 24px; margin-left: -1px; background: linear-gradient(#f87171 50%, #e8edf2 50%); border-radius: 2px; transition: transform 100ms linear; }
-.sep { width: 1px; height: 22px; background: var(--border); margin: 0 6px; }
-.item { width: 34px; height: 34px; padding: 8px; border-radius: 9px; color: #c8d3dd; cursor: pointer; position: relative; flex: none; }
-.item:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
-.item.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.item[data-tip]:hover::after {
-  content: attr(data-tip); position: absolute; bottom: 42px; left: 50%; transform: translateX(-50%);
-  white-space: nowrap; font-size: 11px; padding: 4px 8px; border-radius: 7px;
-  background: var(--bg2); border: 1px solid var(--border-strong); color: var(--text); pointer-events: none;
-}
-.bridge { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px #22c55e; margin: 0 7px 0 4px; }
-.tbux { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; padding: 0 4px; }
-.tbux .ico { width: 15px; height: 15px; color: #fbbf24; }
-.dock.nocompass .compass, .dock.nocompass .compass + .sep { display: none; }
-.dock.notbux .tbux { display: none; }
-.dock.wide .item { width: 40px; height: 40px; padding: 10px; }
+.note.show { opacity: 1; }
 
 /* message bar toast */
 .toast {
-  position: absolute; left: 50%; bottom: 120px; transform: translate(-50%, 16px);
+  position: absolute; left: 50%; top: 60px; bottom: auto; transform: translate(-50%, 16px);
   width: min(620px, calc(100% - 40px)); display: flex; align-items: center; gap: 10px;
   padding: 10px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border-strong);
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45); opacity: 0; pointer-events: none; transition: opacity 220ms, transform 220ms; z-index: 6;
@@ -339,9 +224,7 @@ footer .wrap { display: flex; gap: 20px; justify-content: space-between; flex-wr
 footer img { height: 18px; opacity: 0.8; }
 
 @media (max-width: 640px) {
-  .stage { height: 600px; }
-  .dock .item { width: 30px; height: 30px; padding: 7px; }
-  .setgrid { grid-template-columns: 1fr; }
+  .stage { height: 700px; }
 }
 </style>
 </head>
@@ -368,7 +251,7 @@ footer img { height: 18px; opacity: 0.8; }
       <a class="btn primary" id="dl" href="https://github.com/Kronzy0nButtons/ThereModernUI/releases/latest"><span class="ico" data-icon="box-open"></span> Download <span id="ver"></span></a>
       <a class="btn" href="#demo"><span class="ico" data-icon="play"></span> Try the live demo</a>
     </div>
-    <div class="meta">Windows &middot; installs over your There client &middot; uninstall puts everything back</div>
+    <div class="meta">Windows &middot; installs over your There client &middot; uninstall puts everything back &middot; <b>Mac version coming soon</b></div>
   </div>
 </header>
 
@@ -377,7 +260,7 @@ footer img { height: 18px; opacity: 0.8; }
   <div class="wrap">
     <div class="kicker">Live demo</div>
     <h2>Have a play</h2>
-    <p class="sub">This is a mock of the real thing running in your browser. Click the dock buttons, press <code>F1</code> to <code>F12</code>, switch the theme in Settings, turn on Action Mode and walk with <code>WASD</code>.</p>
+    <p class="sub">This is the actual dock, the same code the game runs, hooked up to a pretend world so it works in your browser. Open any panel, press <code>F1</code> to <code>F12</code> (F1 aims the paintgun and puts you in Action Mode), walk with <code>WASD</code>, hit <code>R</code> to reload and <code>Enter</code> to chat. Pick a GIF and it pops up just like it does for everyone near you.</p>
 
     <div class="stage" id="stage" tabindex="0">
       <div class="sun"></div>
@@ -385,7 +268,7 @@ footer img { height: 18px; opacity: 0.8; }
       <div class="palm" style="left:9%;height:190px;transform:rotate(-6deg)"></div>
       <div class="palm" style="left:15%;height:150px;transform:rotate(5deg)"></div>
       <div class="palm" style="right:12%;height:210px;transform:rotate(7deg)"></div>
-      <div class="hud-hint" id="hint">Click the scene, then press <kbd>F1</kbd> or try the dock below</div>
+      <div class="hud-hint" id="hint">Click the scene, then press <kbd>F1</kbd> or use the dock</div>
       <div class="bubble" id="bubble"></div>
       <div class="avatar" id="avatar"><div class="head"></div><div class="body"></div><div class="legs"></div></div>
 
@@ -396,83 +279,8 @@ footer img { height: 18px; opacity: 0.8; }
         <div class="b" data-close>Later</div>
       </div>
 
-      <div class="dockroot">
-        <!-- panels -->
-        <div class="panel" data-panel="wardrobe">
-          <div class="panelbar"><span class="t">Wardrobe</span><input placeholder="Search clothing..."><div class="x">&#10005;</div></div>
-          <div class="pbody"><div class="grid" id="wardrobe"></div></div>
-          <div class="foot"><span>Real catalog photos, cached on your PC</span><span>Click to wear</span></div>
-        </div>
-        <div class="panel" data-panel="items">
-          <div class="panelbar"><span class="t">Inventory</span><input placeholder="Search items..."><div class="x">&#10005;</div></div>
-          <div class="pbody"><div class="grid" id="items"></div></div>
-          <div class="foot"><span>Your own folders, drag and drop</span><span>Drag to the Quick Bar</span></div>
-        </div>
-        <div class="panel" data-panel="emotes">
-          <div class="panelbar"><span class="t">Emotes</span><input placeholder="Search emotes..."><div class="x">&#10005;</div></div>
-          <div class="pbody"><div class="chips" id="emotes"></div></div>
-          <div class="foot"><span>Favorites, routines and Shadow mode</span><span>Right-click to favorite</span></div>
-        </div>
-        <div class="panel" data-panel="music">
-          <div class="panelbar"><span class="t">Music</span><input placeholder="Search songs..."><div class="x">&#10005;</div></div>
-          <div class="pbody">
-            <div class="np"><div class="art"></div><div class="meta"><b id="nptitle">Pick a track</b><span id="npartist">Playlists, queue and Party sync</span></div></div>
-            <div class="tracks" id="tracks"></div>
-          </div>
-        </div>
-        <div class="panel" data-panel="gifs">
-          <div class="panelbar"><span class="t">GIFs</span><input placeholder="Search KLIPY..."><div class="x">&#10005;</div></div>
-          <div class="pbody"><div class="gifgrid" id="gifs"></div></div>
-          <div class="foot"><span>Other ModernUI players see it pop up too</span><b>Powered by KLIPY</b></div>
-        </div>
-        <div class="panel" data-panel="settings">
-          <div class="panelbar"><span class="t">Settings</span><div class="x">&#10005;</div></div>
-          <div class="pbody">
-            <div class="sublabel">Theme</div>
-            <div class="swatches" id="swatches"></div>
-            <div class="sublabel">Appearance</div>
-            <div class="setgrid">
-              <div class="setrow">Compact dock<div class="sw on" data-pref="compact"></div></div>
-              <div class="setrow">Compass<div class="sw on" data-pref="compass"></div></div>
-              <div class="setrow">Tbux balance<div class="sw on" data-pref="tbux"></div></div>
-              <div class="setrow">Action Mode keys<div class="sw on" data-pref="keys"></div></div>
-            </div>
-          </div>
-        </div>
-        <div class="gifcard" id="gifcard"><div class="g" id="gifcardg">GIF</div><small>You</small></div>
-
-        <!-- dock -->
-        <div class="dock" id="dock">
-          <div class="keychat" id="keychat"><div class="dot"></div><b>Action Chat</b><span>Enter to send &middot; Esc to cancel</span></div>
-          <div class="mini" id="mini">
-            <div class="thumb"></div>
-            <div><div class="tt" id="minititle">Track</div><div class="ta">Now playing</div></div>
-            <div class="viz" id="viz"></div>
-            <div class="mbtn" data-icon="backward-step" id="mprev"></div>
-            <div class="mbtn" data-icon="pause" id="mplay"></div>
-            <div class="mbtn" data-icon="forward-step" id="mnext"></div>
-          </div>
-          <div class="quick" id="quick"></div>
-          <div class="row">
-            <div class="grab">&#8942;&#8942;</div>
-            <div class="compass"><span class="n">N</span><div class="needle" id="needle"></div></div>
-            <div class="sep"></div>
-            <div class="item" data-tip="Friends" data-icon="user-group" data-act="comm"></div>
-            <div class="item" data-tip="Items" data-icon="box-open" data-act="items"></div>
-            <div class="item" data-tip="Wardrobe" data-icon="shirt" data-act="wardrobe"></div>
-            <div class="item" data-tip="Emotes" data-icon="face-smile" data-act="emotes"></div>
-            <div class="item" data-tip="GIFs" data-icon="gif" data-act="gifs"></div>
-            <div class="bridge" title="Client Bridge: connected"></div>
-            <div class="tbux"><span class="ico" data-icon="coins"></span><span id="tbux">95,628</span></div>
-            <div class="sep"></div>
-            <div class="item" data-tip="Camera" data-icon="camera" data-act="camera"></div>
-            <div class="item" data-tip="Action Mode" data-icon="person-running" data-act="action"></div>
-            <div class="item" data-tip="Music" data-icon="music" data-act="music"></div>
-            <div class="item" data-tip="Notification" data-icon="bell" data-act="toast"></div>
-            <div class="item" data-tip="Settings" data-icon="gear" data-act="settings"></div>
-          </div>
-        </div>
-      </div>
+      <div class="note" id="note"></div>
+      <iframe id="dockframe" src="demo/compass/dock.html" title="ThereModernUI dock demo"></iframe>
     </div>
 
     <div class="demo-actions">
@@ -491,6 +299,7 @@ footer img { height: 18px; opacity: 0.8; }
       <h2>Your buddy list, cleaned up</h2>
       <p class="sub">The same communicator, rebuilt. Search across everyone, see who is online at a glance, and sort people into your own folders without touching the server-side ones.</p>
       <ul class="ticks">
+        <li><span><b>Resizable at last.</b> Drag the corner and make it as big or small as you like, a long awaited one</span></li>
         <li><span><b>Live search</b> across the whole list, online people first</span></li>
         <li><span><b>Custom folders</b> with drag and drop, saved per avatar</span></li>
         <li><span><b>Add Buddy</b> with live name lookup as you type</span></li>
@@ -528,7 +337,7 @@ footer img { height: 18px; opacity: 0.8; }
       <div class="feat"><div class="fi" data-icon="music"></div><h3>Music + Party sync</h3><p>Search and play music with playlists and a queue. Party sync plays along with other ModernUI users nearby.</p></div>
       <div class="feat"><div class="fi" data-icon="gif"></div><h3>GIFs in chat</h3><p>Pick a GIF and it pops up for every ModernUI player around you. Everyone else just sees a short chat code.</p></div>
       <div class="feat"><div class="fi" data-icon="clapperboard"></div><h3>Scenes</h3><p>Chain an outfit, an emote, a song and a camera angle into one click, then put it on an F-key.</p></div>
-      <div class="feat"><div class="fi" data-icon="bell"></div><h3>Clean notifications</h3><p>The message bar becomes tidy toasts, and the annoying confirmations it can safely answer, it answers for you.</p></div>
+      <div class="feat"><div class="fi" data-icon="bell"></div><h3>Clean notifications</h3><p>The message bar becomes tidy toasts, and the annoying confirmations it can safely answer, it answers for you, like confirming Action Mode or the paintgun aim prompt.</p></div>
       <div class="feat"><div class="fi" data-icon="palette"></div><h3>Themes</h3><p>Pick an accent colour for the whole UI, go compact, hide the compass or the Tbux balance.</p></div>
       <div class="feat"><div class="fi" data-icon="camera"></div><h3>Camera buttons</h3><p>Standard view, face mirror and body mirror one click away.</p></div>
       <div class="feat"><div class="fi" data-icon="tower-broadcast"></div><h3>Stays up to date</h3><p>When a new version is out the dock tells you and links straight to the download.</p></div>
@@ -574,7 +383,8 @@ footer img { height: 18px; opacity: 0.8; }
       <div class="step"><div><b>Run it and pick your There folder</b><span>The one with <code>There.exe</code> in it. Common locations are found for you.</span></div></div>
       <div class="step"><div><b>Start There</b><span>The dock sits where the compass used to be. Toggle it with Places &gt; Compass.</span></div></div>
     </div>
-    <p class="sub" style="margin-top:22px">Updating is the same: run the new setup over the top. Your folders, Quick Bar, scenes and settings stay put. To remove it, use Windows Settings &gt; Apps &gt; ThereModernUI &gt; Uninstall.</p>
+    <p class="sub" style="margin-top:22px"><b>On a Mac?</b> A Mac version is coming soon.</p>
+    <p class="sub" style="margin-top:0">Updating is the same: run the new setup over the top. Your folders, Quick Bar, scenes and settings stay put. To remove it, use Windows Settings &gt; Apps &gt; ThereModernUI &gt; Uninstall.</p>
   </div>
 </section>
 
@@ -583,7 +393,6 @@ footer img { height: 18px; opacity: 0.8; }
   <div class="wrap">
     <div class="kicker">Credits</div>
     <h2>Made by DANKIES</h2>
-    <p class="sub">With a lot of help from the people below.</p>
     <div class="credits">
       <div class="credit"><b>hmphus</b>BrowserProxy and FlashProxy, part of <a href="https://github.com/hmphus/there-edge">There Edge</a> (MIT License)</div>
       <div class="credit"><b>Font Awesome</b>Icons from Font Awesome Free (CC BY 4.0)</div>
@@ -630,181 +439,91 @@ footer img { height: 18px; opacity: 0.8; }
   }
   $('#lightbox').onclick = () => $('#lightbox').classList.remove('show');
 
+  // ---------- the scene around the real dock ----------
   const stage = $('#stage');
-  const dock = $('#dock');
+  const frame = $('#dockframe');
+  const avatar = $('#avatar');
   const bubble = $('#bubble');
   const hint = $('#hint');
+  const note = $('#note');
+  const dock = () => frame.contentWindow && frame.contentWindow.There;
+
   let bubbleTimer;
   function say(text) {
-    bubble.innerHTML = '<b>You:</b>' + text.replace(/</g, '&lt;');
+    bubble.innerHTML = '<b>You:</b>' + String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     bubble.classList.add('show');
     clearTimeout(bubbleTimer);
-    bubbleTimer = setTimeout(() => bubble.classList.remove('show'), 2600);
+    bubbleTimer = setTimeout(() => bubble.classList.remove('show'), 3000);
   }
-  function setHint(html) { hint.innerHTML = html; }
+  let noteTimer;
+  function showNote(text) {
+    note.textContent = text;
+    note.classList.add('show');
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => note.classList.remove('show'), 3200);
+  }
 
-  // panels
-  function openPanel(name) {
-    const target = $(`.panel[data-panel="${name}"]`);
-    const wasOpen = target && target.classList.contains('open');
-    $$('.panel').forEach(p => p.classList.remove('open'));
-    $$('.item').forEach(i => i.classList.remove('on'));
-    if (target && !wasOpen) {
-      target.classList.add('open');
-      const btn = $(`.item[data-act="${name}"]`);
-      if (btn) { btn.classList.add('on'); }
+  let actionOn = false;
+  function idleHint() {
+    hint.innerHTML = actionOn
+      ? '<kbd>W A S D</kbd> walk &middot; <kbd>Space</kbd> jump &middot; <kbd>R</kbd> reload &middot; <kbd>Enter</kbd> chat'
+      : 'Click the scene, then press <kbd>F1</kbd> or use the dock';
+  }
+
+  let walkX = 0;
+  let walkTimer;
+  window.addEventListener('message', e => {
+    const m = e.data || {};
+    if (!m.tmuiDemo) {
+      return;
     }
-    if (actionOn) { $('.item[data-act="action"]').classList.add('on'); }
-  }
-  $$('.panel .x').forEach(x => x.onclick = () => openPanel(''));
-
-  // wardrobe
-  const clothes = [
-    ['Camo Cap', 'shirt', '#4d5d3a,#2f3a24'], ['White Tee', 'shirt', '#e5e7eb,#9ca3af'], ['Denim Jeans', 'shirt', '#3b5b8c,#1e3557'],
-    ['Hi-Tops', 'shirt', '#ef4444,#7f1d1d'], ['Shades', 'shirt', '#111827,#374151'], ['Gold Chain', 'star', '#fbbf24,#b45309'],
-    ['Hoodie', 'shirt', '#8b5cf6,#4c1d95'], ['Beanie', 'shirt', '#f97316,#9a3412'], ['Board Shorts', 'shirt', '#06b6d4,#0e7490'],
-  ];
-  clothes.forEach(([name, icon, g], i) => {
-    const c = document.createElement('div');
-    c.className = 'card' + (i == 0 || i == 1 ? ' worn' : '');
-    c.innerHTML = `<div class="pic" style="background:linear-gradient(135deg,${g})"><span class="ico">${tmuiIcon(icon)}</span></div>${name}`;
-    c.onclick = () => { c.classList.toggle('worn'); say(c.classList.contains('worn') ? `*puts on ${name}*` : `*takes off ${name}*`); };
-    $('#wardrobe').appendChild(c);
+    if (m.say != null) {
+      say(m.say);
+    }
+    if (m.note) {
+      showNote(m.note);
+    }
+    if (m.camera) {
+      showNote(`Camera: ${m.camera}`);
+    }
+    if (m.actionMode != null) {
+      actionOn = m.actionMode;
+      idleHint();
+    }
+    if (m.typing !== undefined) {
+      if (m.typing == null) {
+        idleHint();
+      } else {
+        hint.innerHTML = 'Action Chat: ' + (m.typing || '').replace(/&/g, '&amp;').replace(/</g, '&lt;') + '_ &middot; <kbd>Enter</kbd> to send';
+      }
+    }
+    if (m.walk) {
+      if (m.walk == 'a' || m.walk == 'd') {
+        walkX = Math.max(-280, Math.min(280, walkX + (m.walk == 'a' ? -14 : 14)));
+        avatar.style.left = `calc(50% + ${walkX}px)`;
+        bubble.style.left = `calc(50% + ${walkX}px)`;
+      }
+      const deg = { w: 0, d: 90, s: 180, a: -90 }[m.walk];
+      frame.contentWindow.postMessage({ tmuiHeading: deg }, '*');
+      avatar.classList.add('walk');
+      clearTimeout(walkTimer);
+      walkTimer = setTimeout(() => avatar.classList.remove('walk'), 250);
+    }
+    if (m.jump) {
+      avatar.animate([{ transform: 'translateX(-50%)' }, { transform: 'translateX(-50%) translateY(-60px)' }, { transform: 'translateX(-50%)' }], { duration: 520, easing: 'ease-out' });
+    }
   });
 
-  // items
-  const items = [
-    ['Paintgun', 'bolt', '#38bdf8,#1d4ed8'], ['Buggy', 'map-location-dot', '#22c55e,#166534'], ['Hoverboard', 'wand-magic-sparkles', '#a855f7,#6b21a8'],
-    ['Camera', 'camera', '#64748b,#334155'], ['Boombox', 'music', '#f472b6,#9d174d'], ['Gift Box', 'box-open', '#fbbf24,#92400e'],
-  ];
-  items.forEach(([name, icon, g]) => {
-    const c = document.createElement('div');
-    c.className = 'card';
-    c.innerHTML = `<div class="pic" style="background:linear-gradient(135deg,${g})"><span class="ico">${tmuiIcon(icon)}</span></div>${name}`;
-    c.onclick = () => say(`*takes out the ${name}*`);
-    $('#items').appendChild(c);
+  // compass follows the mouse while you're not walking
+  stage.addEventListener('mousemove', e => {
+    if (actionOn || !frame.contentWindow) {
+      return;
+    }
+    const r = stage.getBoundingClientRect();
+    frame.contentWindow.postMessage({ tmuiHeading: Math.round(((e.clientX - r.left) / r.width - 0.5) * 220) }, '*');
   });
 
-  // emotes
-  const emotes = ['wave', 'laugh', 'twist', 'dance', 'clap', 'shrug', 'cheer', 'bow', 'flex', 'yawn', 'robot', 'moonwalk'];
-  const favs = new Set(['twist', 'wave']);
-  function renderEmotes() {
-    const box = $('#emotes');
-    box.innerHTML = '';
-    [...emotes].sort((a, b) => favs.has(b) - favs.has(a)).forEach(e => {
-      const chip = document.createElement('div');
-      chip.className = 'chip' + (favs.has(e) ? ' fav' : '');
-      chip.textContent = "'" + e;
-      chip.onclick = () => say("'" + e);
-      chip.oncontextmenu = ev => { ev.preventDefault(); favs.has(e) ? favs.delete(e) : favs.add(e); renderEmotes(); };
-      box.appendChild(chip);
-    });
-  }
-  renderEmotes();
-
-  // quick bar F1-F12
-  const slots = [['Paintgun', 'bolt'], ['Buggy', 'map-location-dot'], ['Hoverboard', 'wand-magic-sparkles'], ['Party scene', 'clapperboard'], null, null, null, null, null, null, null, null];
-  slots.forEach((s, i) => {
-    const el = document.createElement('div');
-    el.className = 'slot' + (s ? ' full' : '');
-    el.title = s ? `${s[0]} (F${i + 1})` : `F${i + 1}`;
-    el.innerHTML = s ? `<span class="ico">${tmuiIcon(s[1])}</span>` : `F${i + 1}`;
-    el.onclick = () => fireSlot(i);
-    $('#quick').appendChild(el);
-  });
-  let lastFire = 0;
-  function fireSlot(i) {
-    const now = Date.now();
-    if (now - lastFire < 500) { return; }
-    lastFire = now;
-    const el = $$('.slot')[i];
-    el.classList.add('pulse');
-    setTimeout(() => el.classList.remove('pulse'), 260);
-    const s = slots[i];
-    if (!s) { say(`(F${i + 1} is empty, drag something onto it)`); return; }
-    say(i == 3 ? "*outfit on, music on* 'dance" : `*takes out the ${s[0]}*`);
-    if (i == 3) { playTrack(1); }
-  }
-
-  // music
-  const tracks = [['Island Breeze', 'Lo-fi Beach', '3:12'], ['Night Drive', 'Synthwave Club', '4:05'], ['Makena Sunset', 'Chill Hop', '2:48'], ['Hoverboard Race', 'Drum and Bass', '3:31']];
-  let playing = -1;
-  for (let i = 0; i < 28; i++) {
-    const b = document.createElement('i');
-    b.style.animationDuration = (520 + Math.round(Math.random() * 620)) + 'ms';
-    b.style.animationDelay = '-' + Math.round(Math.random() * 1100) + 'ms';
-    $('#viz').appendChild(b);
-  }
-  tracks.forEach(([t, a, len], i) => {
-    const row = document.createElement('div');
-    row.className = 'track';
-    row.innerHTML = `${t} <span>${a} &middot; ${len}</span>`;
-    row.onclick = () => playTrack(i);
-    $('#tracks').appendChild(row);
-  });
-  function playTrack(i) {
-    playing = i;
-    $$('.track').forEach((r, k) => r.classList.toggle('on', k == i));
-    $('#nptitle').textContent = tracks[i][0];
-    $('#npartist').textContent = tracks[i][1];
-    $('#minititle').textContent = tracks[i][0];
-    $('#mini').classList.add('show', 'playing');
-    $('#mplay').innerHTML = tmuiIcon('pause');
-  }
-  $('#mplay').onclick = () => {
-    const m = $('#mini');
-    m.classList.toggle('playing');
-    $('#mplay').innerHTML = tmuiIcon(m.classList.contains('playing') ? 'pause' : 'play');
-  };
-  $('#mnext').onclick = () => playTrack((playing + 1) % tracks.length);
-  $('#mprev').onclick = () => playTrack((playing + tracks.length - 1) % tracks.length);
-
-  // gifs
-  const gifs = [['lol', '#f472b6,#8b5cf6,#38bdf8'], ['wave', '#22c55e,#06b6d4,#a3e635'], ['party', '#fbbf24,#ef4444,#a855f7'], ['gg', '#38bdf8,#1d4ed8,#22d3ee'], ['omg', '#f97316,#facc15,#ef4444'], ['dance', '#a855f7,#ec4899,#6366f1']];
-  gifs.forEach(([word, g]) => {
-    const t = document.createElement('div');
-    t.className = 'gif';
-    t.style.backgroundImage = `linear-gradient(135deg,${g})`;
-    t.textContent = word.toUpperCase();
-    t.onclick = () => {
-      openPanel('');
-      const card = $('#gifcard');
-      $('#gifcardg').style.backgroundImage = `linear-gradient(135deg,${g})`;
-      $('#gifcardg').textContent = word.toUpperCase();
-      card.classList.add('show');
-      say('[TMUI] [GIF] [' + word + '-x7Kq2]');
-      clearTimeout(card._t);
-      card._t = setTimeout(() => card.classList.remove('show'), 5000);
-    };
-    $('#gifs').appendChild(t);
-  });
-  $('#gifcard').onclick = () => $('#gifcard').classList.remove('show');
-
-  // settings
-  const themes = ['#38bdf8', '#a78bfa', '#f472b6', '#4ade80', '#fbbf24', '#f87171', '#2dd4bf'];
-  themes.forEach((c, i) => {
-    const s = document.createElement('div');
-    s.className = 'swatch' + (i == 0 ? ' on' : '');
-    s.style.background = c;
-    s.onclick = () => {
-      document.documentElement.style.setProperty('--accent', c);
-      document.documentElement.style.setProperty('--accent-bright', `color-mix(in srgb, ${c} 45%, white)`);
-      $$('.swatch').forEach(x => x.classList.remove('on'));
-      s.classList.add('on');
-    };
-    $('#swatches').appendChild(s);
-  });
-  $$('.sw').forEach(sw => sw.onclick = () => {
-    sw.classList.toggle('on');
-    const on = sw.classList.contains('on');
-    const p = sw.getAttribute('data-pref');
-    if (p == 'compact') { dock.classList.toggle('wide', !on); }
-    if (p == 'compass') { dock.classList.toggle('nocompass', !on); }
-    if (p == 'tbux') { dock.classList.toggle('notbux', !on); }
-    if (p == 'keys') { keysAllowed = on; updateAction(); }
-  });
-
-  // toast
+  // message bar toast (the message bar is its own window in the game)
   const toastMsgs = ['You have 1 pending buddy request. Click VIEW to accept or ignore now.', 'Kronzy wants to summon you to Makena Beach.', 'You received a gift: Gold Chain.'];
   let toastIdx = 0;
   function showToast() {
@@ -815,83 +534,16 @@ footer img { height: 18px; opacity: 0.8; }
   }
   $$('#toast [data-close]').forEach(b => b.onclick = () => $('#toast').classList.remove('show'));
 
-  // action mode + WASD
-  let actionOn = false;
-  let keysAllowed = true;
-  let chatting = false;
-  let typed = '';
-  function updateAction() {
-    $('.item[data-act="action"]').classList.toggle('on', actionOn);
-    $('#keychat').classList.toggle('show', actionOn && chatting);
-    if (actionOn && keysAllowed) {
-      setHint(chatting ? 'Action Chat: type, then <kbd>Enter</kbd> to send' : '<kbd>W A S D</kbd> walk &middot; <kbd>Space</kbd> jump &middot; <kbd>R</kbd> reload &middot; <kbd>Enter</kbd> chat');
-    } else {
-      setHint('Click the scene, then press <kbd>F1</kbd> or try the dock below');
-    }
-  }
-  function toggleAction() { actionOn = !actionOn; chatting = false; typed = ''; updateAction(); stage.focus(); }
-
-  // compass follows the mouse, or the walk direction
-  let heading = 0;
-  function setHeading(deg) { heading = deg; $('#needle').style.transform = `rotate(${-deg}deg)`; }
-  stage.addEventListener('mousemove', e => {
-    if (actionOn) { return; }
-    const r = stage.getBoundingClientRect();
-    setHeading(((e.clientX - r.left) / r.width - 0.5) * 220);
-  });
-
-  // dock buttons
-  $$('.item').forEach(btn => btn.onclick = () => {
-    const act = btn.getAttribute('data-act');
-    if (act == 'toast') { showToast(); return; }
-    if (act == 'action') { toggleAction(); return; }
-    if (act == 'camera') { say('*switches to face mirror*'); return; }
-    if (act == 'comm') { document.querySelector('.comm').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
-    openPanel(act);
-  });
   $$('[data-demo]').forEach(b => b.onclick = () => {
     const d = b.getAttribute('data-demo');
+    const T = dock();
     if (d == 'toast') { showToast(); }
-    if (d == 'action') { toggleAction(); }
-    if (d == 'music') { playTrack(0); }
+    if (d == 'action' && T) { T.toggleActionMode(); }
+    if (d == 'music' && T) { if (T.data.panel != 'music') { T.togglePanel('music'); } }
+    frame.focus();
   });
 
-  // keyboard: F-keys always, WASD/Space/R/Enter in Action Mode (only while the demo is focused)
-  const avatar = $('#avatar');
-  let walkX = 0;
-  let walkTimer;
-  stage.addEventListener('keydown', e => {
-    const f = e.key.match(/^F(\d{1,2})$/);
-    if (f && +f[1] <= 12) { e.preventDefault(); fireSlot(+f[1] - 1); return; }
-    if (!actionOn || !keysAllowed) { return; }
-    if (chatting) {
-      e.preventDefault();
-      if (e.key == 'Enter') { if (typed) { say(typed); } chatting = false; typed = ''; updateAction(); }
-      else if (e.key == 'Escape') { chatting = false; typed = ''; updateAction(); }
-      else if (e.key == 'Backspace') { typed = typed.slice(0, -1); }
-      else if (e.key.length == 1) { typed += e.key; setHint('Action Chat: ' + typed.replace(/</g, '&lt;') + '_'); }
-      return;
-    }
-    const k = e.key.toLowerCase();
-    if (['w', 'a', 's', 'd', ' '].includes(k) || e.key == 'Enter' || k == 'r') { e.preventDefault(); }
-    if (k == 'a' || k == 'd') {
-      walkX = Math.max(-260, Math.min(260, walkX + (k == 'a' ? -14 : 14)));
-      avatar.style.left = `calc(50% + ${walkX}px)`;
-      setHeading(k == 'a' ? -90 : 90);
-    }
-    if (k == 'w' || k == 's') { setHeading(k == 'w' ? 0 : 180); }
-    if (['w', 'a', 's', 'd'].includes(k)) {
-      avatar.classList.add('walk');
-      clearTimeout(walkTimer);
-      walkTimer = setTimeout(() => avatar.classList.remove('walk'), 250);
-    }
-    if (k == ' ') {
-      avatar.animate([{ transform: 'translateX(-50%)' }, { transform: 'translateX(-50%) translateY(-60px)' }, { transform: 'translateX(-50%)' }], { duration: 520, easing: 'ease-out' });
-    }
-    if (k == 'r') { say('*reloads the Paintgun*'); }
-    if (e.key == 'Enter') { chatting = true; typed = ''; updateAction(); }
-  });
-  stage.addEventListener('click', e => { if (e.target == stage || e.target.closest('.avatar')) { stage.focus(); } });
+  frame.addEventListener('load', () => { idleHint(); });
 })();
 </script>
 </body>
