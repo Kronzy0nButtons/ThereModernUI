@@ -125,7 +125,8 @@ try {
   $body += '```'
   if ($upstream) { $body += ''; $body += "Proxy DLLs built from There Edge $upstream." }
   $notesFile = Join-Path $env:TEMP "tmui-release-$version.md"
-  Set-Content $notesFile ($body -join "`n") -Encoding utf8
+  # no BOM, it shows up as junk at the start of the release notes
+  [IO.File]::WriteAllText($notesFile, ($body -join "`n"), (New-Object Text.UTF8Encoding($false)))
   Run $gh @('release', 'create', $tag, $setup, '--repo', $repo, '--title', "ThereModernUI $tag", '--notes-file', $notesFile, '--verify-tag')
   Remove-Item $notesFile -ErrorAction SilentlyContinue
   Write-Host "Published https://github.com/$repo/releases/tag/$tag"
