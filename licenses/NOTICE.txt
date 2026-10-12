@@ -1,0 +1,21 @@
+ThereModernUI - third-party notices
+===================================
+
+BrowserProxy and FlashProxy (rebuilt)
+  The bundled BrowserProxy.dll and FlashProxy.dll are modified builds of
+  BrowserProxy and FlashProxy from There Edge by Hmph!
+  (https://github.com/hmphus/there-edge), used under the MIT License - see
+  LICENSE-ThereEdge.md in this folder. Each release is rebuilt from the
+  latest upstream source with ThereModernUI's patches applied
+  (patches/there-edge/ in the source repository).
+
+Font Awesome Free 6.5.2
+  Icons by Fonticons, Inc. (https://fontawesome.com), licensed CC BY 4.0
+  (https://fontawesome.com/license/free). Embedded as inline SVG paths.
+
+Notification sound
+  "Positive Notification" by Universfield.
+
+GIFs
+  GIF search and media are provided by KLIPY (https://klipy.com) under the
+  KLIPY API terms. "Powered by KLIPY" is shown in the GIFs panel.

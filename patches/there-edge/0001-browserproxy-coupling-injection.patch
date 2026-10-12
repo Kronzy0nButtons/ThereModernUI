@@ -1,0 +1,113 @@
+diff --git a/BrowserProxy/BrowserProxy.cpp b/BrowserProxy/BrowserProxy.cpp
+index d6b2c3a..bb53789 100644
+--- a/BrowserProxy/BrowserProxy.cpp
++++ b/BrowserProxy/BrowserProxy.cpp
+@@ -1304,7 +1304,8 @@ HRESULT BrowserProxyModule::OnDOMContentLoaded(ICoreWebView2 *sender, ICoreWebVi
+     if (sender == nullptr || args == nullptr)
+         return E_INVALIDARG;
+ 
+-#if 0
++    // ThereModernUI: inject coupling.js into webapps pages so the dock can
++    // read an item's Product ID off its About page (via the window title)
+     CComBSTR burl;
+     {
+         WCHAR *url = nullptr;
+@@ -1327,7 +1328,6 @@ HRESULT BrowserProxyModule::OnDOMContentLoaded(ICoreWebView2 *sender, ICoreWebVi
+         if (wcscmp(host, m_webappsHost) == 0)
+             ApplyScript(sender, IDR_COUPLING);
+     }
+-#endif
+ 
+     return S_OK;
+ }
+@@ -1538,11 +1538,13 @@ HRESULT BrowserProxyModule::ApplyScript(ICoreWebView2 *view, LONG id)
+     if (text.m_str == nullptr)
+         return E_FAIL;
+ 
++    // tsize counts wide chars, dsize counts UTF-8 bytes, so tsize < dsize
++    // whenever there's non-ASCII text. Only 0 is an actual failure.
+     DWORD tsize = MultiByteToWideChar(CP_UTF8, 0, data, dsize, text.m_str, dsize);
+-    if (tsize != dsize)
++    if (tsize == 0 || tsize > dsize)
+         return E_FAIL;
+ 
+-    text[dsize] = 0;
++    text[tsize] = 0;
+ 
+     if (FAILED(view->ExecuteScript(text, Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+         [this](HRESULT errorCode, LPCWSTR resultObjectAsJson) -> HRESULT
+diff --git a/BrowserProxy/coupling.js b/BrowserProxy/coupling.js
+index c9aca5d..e0b6cd9 100644
+--- a/BrowserProxy/coupling.js
++++ b/BrowserProxy/coupling.js
+@@ -1,3 +1,12 @@
++// ThereModernUI - coupling.js
++// There Edge's coupling.js (injected into pages BrowserProxy loads) plus one
++// addition at the bottom that reads an item's Product ID off its About page.
++// Author: DANKIES (the addition)
++// Based on There Edge by hmphus (MIT licence, see licenses/LICENSE-ThereEdge.md)
++//
++// Everything stays on the player's machine. The VoiceTrainer / ActiveXObject
++// bits below are hmphus's and unchanged.
++
+ if (window.VoiceTrainer != undefined) {
+   VoiceTrainer.style.display = 'none';
+   VoiceTrainer.configState = 0;
+@@ -68,4 +77,55 @@ ActiveXObject.prototype.load = function(url) {
+   request.send();
+ };
+ 
+-console.log('There Edge compatibility coupling installed');
+\ No newline at end of file
++console.log('There Edge compatibility coupling installed');
++
++// ------------------------------------------------------------------
++// ThereModernUI: grab the name + Product ID from an item About page and put
++// them in the page title. The dock reads the title back through
++// /client/windows/<id>/titleBarText. We're running inside the About page
++// itself, so there's no CORS or login problem reading it.
++// ------------------------------------------------------------------
++(function() {
++  function harvestAbout() {
++    try {
++      const title = document.title || '';
++      const tm = title.match(/There Help: About (.+)$/i);
++      if (!tm) {
++        return; // not an item About page
++      }
++      const name = tm[1].trim();
++
++      const text = document.body ? (document.body.innerText || '') : '';
++      const pm = text.match(/Product\s*ID[:\s]*?(\d{4,10})/i);
++      if (!pm) {
++        return; // no product id (avatar/brick/doc about page)
++      }
++      const productId = pm[1];
++
++      // the photo is on the page as /catalog/media/<file>, take the filename
++      // so the dock doesn't need the (CORS blocked) catalog XML
++      let image = '';
++      const imgs = document.getElementsByTagName('img');
++      for (let k = 0; k < imgs.length; k++) {
++        const src = imgs[k].getAttribute('src') || '';
++        const im = src.match(/catalog\/media\/([a-z0-9_]+\.(?:jpg|jpeg|gif|png))/i);
++        if (im) { image = im[1]; break; }
++      }
++
++      const um = (location.search || '').match(/poid=(\d+)/i);
++      const poid = um ? um[1] : '';
++
++      // title format the dock looks for:
++      //   TMUI<sep>productId<sep>poid<sep>image<sep>name   (sep = U+2502)
++      const S = '\u2502';
++      document.title = 'TMUI' + S + productId + S + poid + S + image + S + name;
++    } catch (e) {
++    }
++  }
++
++  if (document.readyState === 'complete') {
++    harvestAbout();
++  } else {
++    window.addEventListener('load', harvestAbout);
++  }
++})();

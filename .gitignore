@@ -1,0 +1,29 @@
+# Build output - publish the setup .exe as a GitHub Release asset instead.
+dist/
+
+# Per-user data, never published.
+Resources/compass/catalogcache.json
+
+# Superseded by the installer (its uninstall backs up originals itself).
+install.bat
+uninstall.bat
+restore/
+
+# Old dev helper (no longer used) and the source copy of the sound
+# (the shipped copy lives in Resources/messagebar/notification.mp3).
+tools/
+universfield-new-notification-02-323592.mp3
+
+# Upstream There Edge checkout used by build-proxies.ps1.
+build/
+universfield-positive-notification-351299.mp3
+
+# Proxy DLLs are build outputs: build-proxies.ps1 rebuilds them from the
+# latest upstream There Edge plus patches/ on every release.
+browserproxy/*.modui.dll
+flashproxy/*.modui.dll
+
+# Local secrets (the KLIPY key) and the scrambled key file generated from them
+# at build time - shipped in the installer, never committed.
+secrets/
+Resources/compass/klipykey.js

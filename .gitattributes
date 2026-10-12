@@ -1,0 +1,13 @@
+# Patches must stay byte-exact to apply against upstream There Edge.
+*.patch -text
+
+# Binary assets.
+*.png binary
+*.psd binary
+*.mp3 binary
+*.dll binary
+*.exe binary
+
+# bmp is binary too (installer artwork)
+*.bmp binary
+*.ico binary

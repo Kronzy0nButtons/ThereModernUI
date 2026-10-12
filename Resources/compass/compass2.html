@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<!-- ThereModernUI - compass2.html. Author: DANKIES -->
+<html lang="en-US">
+<head>
+<title>MiniMap</title>
+<meta http-equiv="content-type" content="text/html; charset=utf-8">
+<meta name="version" content="1.0">
+<meta name="author" content="Makena2 Mods">
+<link rel="stylesheet" type="text/css" href="dock.css">
+<script src="../js/jquery-3.5.1.min.js"></script>
+<script src="../js/framework.js"></script>
+<script src="iconcache.js"></script>
+<script src="icons.js"></script>
+<script src="ytmusic.js"></script>
+<script src="../tmui/update.js"></script>
+<script src="klipykey.js"></script>
+<script src="dock.js"></script>
+</head>
+<body>
+<div class="dockroot" data-state="shown" data-ready="0" data-panel="" data-cockpit="checking">
+<div class="dock">
+<div class="dockgate" title="The dock talks to the There client over the Client Bridge">
+<span class="dgdot"></span>
+<span class="dgtext">Waiting for the There client&#8230;</span>
+</div>
+<div class="keychat"><span class="kcdot"></span><b>Action Chat</b><span class="kchint">Enter to send &#183; Esc to cancel</span></div>
+<div class="syncbar" data-active="0">
+<div class="sbtrack"><div class="sbsweep"></div></div>
+<span class="sbtext"></span>
+</div>
+<div class="miniplayer" data-active="0">
+<div class="mpthumb"></div>
+<div class="mpmeta">
+<div class="mptitle"></div>
+<div class="mpauthor"></div>
+</div>
+<div class="mpviz" aria-hidden="true"><span style="animation-duration:851ms;animation-delay:-308ms"></span><span style="animation-duration:924ms;animation-delay:-98ms"></span><span style="animation-duration:594ms;animation-delay:-1097ms"></span><span style="animation-duration:616ms;animation-delay:-748ms"></span><span style="animation-duration:1116ms;animation-delay:-118ms"></span><span style="animation-duration:1039ms;animation-delay:-439ms"></span><span style="animation-duration:558ms;animation-delay:-176ms"></span><span style="animation-duration:964ms;animation-delay:-856ms"></span><span style="animation-duration:591ms;animation-delay:-492ms"></span><span style="animation-duration:612ms;animation-delay:-869ms"></span><span style="animation-duration:580ms;animation-delay:-253ms"></span><span style="animation-duration:748ms;animation-delay:-126ms"></span><span style="animation-duration:1110ms;animation-delay:-812ms"></span><span style="animation-duration:570ms;animation-delay:-452ms"></span><span style="animation-duration:567ms;animation-delay:-272ms"></span><span style="animation-duration:816ms;animation-delay:-858ms"></span><span style="animation-duration:667ms;animation-delay:-241ms"></span><span style="animation-duration:1104ms;animation-delay:-631ms"></span><span style="animation-duration:1093ms;animation-delay:-370ms"></span><span style="animation-duration:625ms;animation-delay:-384ms"></span><span style="animation-duration:901ms;animation-delay:-199ms"></span><span style="animation-duration:1080ms;animation-delay:-128ms"></span><span style="animation-duration:1097ms;animation-delay:-122ms"></span><span style="animation-duration:730ms;animation-delay:-1016ms"></span><span style="animation-duration:1064ms;animation-delay:-875ms"></span><span style="animation-duration:841ms;animation-delay:-953ms"></span><span style="animation-duration:1119ms;animation-delay:-928ms"></span><span style="animation-duration:890ms;animation-delay:-613ms"></span></div>
+<div class="mpbtn" data-id="prev" title="Previous" data-icon="backward-step"></div>
+<div class="mpbtn mpplay" data-id="play" title="Play / Pause" data-icon="play"></div>
+<div class="mpbtn" data-id="next" title="Next" data-icon="forward-step"></div>
+<div class="mpbtn" data-id="open" title="Open music" data-icon="music"></div>
+</div>
+<div class="quickbar" data-active="0">
+<div class="quickslots"></div>
+</div>
+<div class="dockrow">
+<div class="grab" title="Drag to move the dock">&#8942;&#8942;</div>
+<div class="compass" title="Heading">
+<div class="rose">
+<span class="n">N</span><span class="e">E</span><span class="s">S</span><span class="w">W</span>
+<div class="needle"></div>
+</div>
+<div class="heading">&mdash;</div>
+</div>
+<div class="sep"></div>
+<div class="item" data-id="friends" title="People">
+<div class="glyph" data-icon="user-group"></div>
+<div class="label">Friends</div>
+</div>
+<div class="item" data-id="inventory" title="Inventory">
+<div class="glyph" data-icon="box-open"></div>
+<div class="label">Items</div>
+</div>
+<div class="item" data-id="wardrobe" title="Wardrobe">
+<div class="glyph" data-icon="shirt"></div>
+<div class="label">Wardrobe</div>
+</div>
+<div class="item" data-id="shop" title="Shopping">
+<div class="glyph" data-icon="cart-shopping"></div>
+<div class="label">Shop</div>
+</div>
+<div class="item" data-id="auctions" title="Auctions">
+<div class="glyph" data-icon="gavel"></div>
+<div class="label">Auctions</div>
+</div>
+<div class="item" data-id="places" title="Places">
+<div class="glyph" data-icon="map-location-dot"></div>
+<div class="label">Places</div>
+</div>
+<div class="item" data-id="events" title="Events happening now">
+<div class="glyph" data-icon="calendar-days"></div>
+<div class="label">Events</div>
+</div>
+<div class="item" data-id="review" title="Review Something">
+<div class="glyph" data-icon="star"></div>
+<div class="label">Review</div>
+</div>
+<div class="item" data-id="emotes" title="Emotes">
+<div class="glyph" data-icon="face-smile"></div>
+<div class="label">Emotes</div>
+</div>
+<div class="item" data-id="gifs" title="GIFs">
+<div class="glyph" data-icon="gif"></div>
+<div class="label">GIFs</div>
+</div>
+<div class="item" data-id="scenes" title="Scenes: chain outfits, emotes, music &amp; camera into one action">
+<div class="glyph" data-icon="clapperboard"></div>
+<div class="label">Scenes</div>
+</div>
+<div class="item" data-id="developer" title="Developer submissions">
+<div class="glyph" data-icon="code"></div>
+<div class="label">Dev</div>
+</div>
+<div class="cockpitdot" title="Client Bridge: checking&#8230;"></div>
+<div class="tbux" title="Therebucks balance">
+<span class="tbicon" data-icon="coins"></span>
+<span class="tbamount">&mdash;</span>
+</div>
+<div class="sep"></div>
+<div class="item mini" data-id="viewstd" title="Standard view">
+<div class="glyph" data-icon="camera"></div>
+</div>
+<div class="item mini" data-id="viewface" title="Face mirror">
+<div class="glyph" data-icon="face-smile"></div>
+</div>
+<div class="item mini" data-id="viewbody" title="Body mirror">
+<div class="glyph" data-icon="user"></div>
+</div>
+<div class="sep"></div>
+<div class="item mini" data-id="actionmode" title="Action Mode (mouse steering)">
+<div class="glyph" data-icon="person-running"></div>
+</div>
+<div class="item mini" data-id="music" title="Music">
+<div class="glyph" data-icon="music"></div>
+</div>
+<div class="item mini" data-id="quickbar" title="Quick Bar">
+<div class="glyph" data-icon="bolt"></div>
+</div>
+<div class="item mini" data-id="apptray" title="Library: open anything that isn’t on the dock">
+<div class="glyph" data-icon="table-cells"></div>
+</div>
+<div class="item mini" data-id="settings" title="Settings">
+<div class="glyph" data-icon="gear"></div>
+</div>
+<div class="item mini" data-id="about" title="About ThereModernUI">
+<div class="glyph" data-icon="circle-info"></div>
+</div>
+</div>
+</div>
+<div class="panel">
+<div class="panelbar">
+<span class="paneltitle"></span>
+<div class="panelsearch"><input type="text" placeholder="Search&#8230;" spellcheck="false"></div>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="tabs"></div>
+<div class="foldertabs"></div>
+<div class="grid"></div>
+<div class="folderprompt" data-active="0"></div>
+<div class="panelfooter">
+<span class="footcount"></span>
+<div class="footctls">
+<div class="quickequip" title="Quick equip: left-click a clothing card to wear/take off. Off: left-click opens the actions.">
+<span class="qelabel">Quick equip</span>
+<div class="qeswitch" data-on="1"><div class="qeknob"></div></div>
+</div>
+<div class="viewtoggle" title="View">
+<div class="vbtn" data-view="tile" title="Tiles">&#9638;</div>
+<div class="vbtn" data-view="list" title="List">&#9776;</div>
+</div>
+<div class="scalectl" title="Card size">
+<span class="scaleglyph small">&#9632;</span>
+<input type="range" class="scaleslider" min="48" max="132" step="4" value="60">
+<span class="scaleglyph big">&#9632;</span>
+</div>
+</div>
+</div>
+</div>
+<div class="settingspanel">
+<div class="panelbar">
+<span class="paneltitle">Settings</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="settingsbody">
+<div class="setsection">
+<div class="setheading">Appearance</div>
+<div class="sethint">Accent colour for the whole UI, and what the dock shows besides its buttons.</div>
+<div class="themeswatches"></div>
+<div class="togglegrid appeartoggles"></div>
+</div>
+<div class="setsection">
+<div class="setheading">Controls</div>
+<div class="sethint">In Action Mode (or while aiming a gun): <b>W A S D</b> move, <b>Space</b> jumps, <b>R</b> reloads and other letters don&#8217;t type. Press <b>Enter</b> to chat (Action Chat) and <b>Enter</b> again to send. <b>F1 to F12</b> use your Quick Bar slots at any time.</div>
+<div class="togglegrid controltoggles"></div>
+</div>
+<div class="setsection">
+<div class="setheading">GIFs</div>
+<div class="sethint">Share GIFs from KLIPY in chat. Other ThereModernUI users see them pop up above their dock; everyone else sees a short <b>[TMUI] [GIF]</b> code.</div>
+<div class="togglegrid giftoggles"></div>
+</div>
+<div class="setsection">
+<div class="setheading">Dock buttons</div>
+<div class="sethint">Choose what shows on the dock. It resizes itself to fit; hidden buttons stay in the Library.</div>
+<div class="togglegrid docktoggles"></div>
+</div>
+<div class="setsection">
+<div class="setheading">Sync &amp; data</div>
+<div class="setsub">Live sync</div>
+<div class="sethint">Inventory, clothing and item actions sync at startup and refresh automatically, so things work instantly and background changes (purchases, trades, gifts) appear on their own.</div>
+<div class="setrow">
+<div class="button syncnow" title="Refresh inventory, clothing and item actions now">&#8635; Sync now</div>
+</div>
+<div class="setnote syncstatus"></div>
+<div class="setsub">Clothing photos</div>
+<div class="sethint">Clothing icons are Flash and can&#8217;t be shown directly. ThereModernUI reads each item&#8217;s real catalog photo once from its info page and caches it on this machine.</div>
+<div class="cachebar" data-state="idle">
+<div class="cacheactions">
+<div class="button cacheall" data-id="cacheall" title="Open each item's info page once so its photo caches">&#128247; Cache all clothing photos</div>
+<div class="button clearcache" data-id="clearcache" title="Clear cached clothing photos">Clear cache</div>
+</div>
+<div class="progress">
+<div class="pbar"><div class="pfill"></div></div>
+<span class="ptext"></span>
+<div class="pbtn" data-id="pause" title="Pause">&#10074;&#10074;</div>
+<div class="pbtn" data-id="resume" title="Resume">&#9658;</div>
+<div class="pbtn" data-id="cancel" title="Cancel">&#10005;</div>
+</div>
+</div>
+<div class="setsub">Folders backup</div>
+<div class="sethint">Your folders and the items in them are saved on this machine only, per avatar. Export a backup file before reinstalling There, then import it afterwards to restore them for this avatar.</div>
+<div class="setrow">
+<div class="button setexport" data-id="export" title="Save a backup file of this avatar's folders">&#128229; Export folders</div>
+<div class="button setimport" data-id="import" title="Restore folders from a backup file">&#128228; Import folders</div>
+</div>
+<div class="setnote setfolders"></div>
+<input type="file" class="importfile" accept="application/json,.json" style="display:none">
+</div>
+<div class="setsection">
+<div class="setheading">Music search</div>
+<div class="sethint">Song search uses a free, keyless Piped instance. Public instances come and go, so if search stops working, pick another below or paste your own.</div>
+<div class="setfield">
+<input type="text" class="musicinstance" placeholder="https://pipedapi.&#8230;" spellcheck="false">
+<div class="button musicinstsave" title="Use this instance">Save</div>
+</div>
+<div class="instancepicks"></div>
+<div class="setnote musicnote"></div>
+</div>
+</div>
+</div>
+<div class="aboutpanel">
+<div class="panelbar">
+<span class="paneltitle">About</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="aboutbody">
+<div class="abouthead">
+<img class="applogo" src="tmui-logo.png" alt="TMUI">
+<div class="apptitle">
+<div class="appname">ThereModernUI <span class="appvernum"></span></div>
+<div class="appver">A modern redesign of the There.com client UI</div>
+</div>
+</div>
+<div class="aboutsection">
+<div class="aboutlabel">Created by</div>
+<div class="aboutvalue"><a class="aboutlink" data-href="https://webapps.prod.there.com/profiles/profiles?AvatarDoid=48917330&amp;Mode=OutThere&amp;op=view" title="View DANKIES&#8217;s There profile">DANKIES</a></div>
+</div>
+<div class="aboutsection">
+<div class="aboutlabel">About</div>
+<div class="aboutvalue">
+This is a replacement addon for the game&#8217;s original Communicator, Compass &amp;
+Message Bar.
+</div>
+</div>
+<div class="aboutsection">
+<div class="aboutlabel">Credits</div>
+<div class="aboutvalue">
+<b>hmphus</b>: BrowserProxy &amp; FlashProxy, part of
+<a class="aboutlink" data-href="https://github.com/hmphus/there-edge">There Edge</a> (<a class="aboutlink" data-href="https://github.com/hmphus/there-edge/blob/main/LICENSE.md">MIT License</a>).
+</div>
+</div>
+<div class="aboutsection">
+<div class="aboutlabel">Icons &amp; sounds</div>
+<div class="aboutvalue">Font Awesome Free by Fonticons, Inc. (<a class="aboutlink" data-href="https://fontawesome.com/license/free">CC BY 4.0</a>), shipped locally. Notification sound by <b>Universfield</b>. GIFs powered by <b>KLIPY</b>.</div>
+</div>
+</div>
+</div>
+<div class="musicpanel">
+<div class="panelbar">
+<span class="paneltitle">Music</span>
+<div class="musicsearch"><input type="text" class="msinput" placeholder="Search YouTube or paste a link&#8230;" spellcheck="false"></div>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="musictabs"></div>
+<div class="musicbody"></div>
+<div class="nowplaying" data-active="0">
+<div class="npthumb"></div>
+<div class="npmeta">
+<div class="nptitle"></div>
+<div class="npauthor"></div>
+</div>
+<div class="npcontrols">
+<div class="npbtn" data-id="shuffle" title="Shuffle" data-icon="shuffle"></div>
+<div class="npbtn" data-id="prev" title="Previous" data-icon="backward-step"></div>
+<div class="npbtn npplay" data-id="play" title="Play / Pause" data-icon="play"></div>
+<div class="npbtn" data-id="next" title="Next" data-icon="forward-step"></div>
+<div class="npbtn" data-id="repeat" title="Repeat" data-icon="repeat"></div>
+<div class="npbtn" data-id="party" title="Party sync: broadcast your tracks and auto-play other TMUI users' tracks" data-icon="tower-broadcast"></div>
+</div>
+<div class="npvol">
+<span class="npvolicon" data-icon="volume-high"></span>
+<input type="range" class="npvolslider" min="0" max="100" step="1" value="70">
+</div>
+</div>
+<div class="ytplayerhost"><div id="ytplayer"></div></div>
+<div class="folderprompt musicprompt" data-active="0"></div>
+</div>
+<div class="emotespanel" data-etab="emotes">
+<div class="panelbar">
+<span class="paneltitle">Emotes</span>
+<div class="emotesearch"><input type="text" placeholder="Search emotes&#8230;" spellcheck="false"></div>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="emotetabs">
+<div class="tab" data-etab="emotes" data-active="1">Emotes</div>
+<div class="tab" data-etab="routines">Routines</div>
+</div>
+<div class="emotebanner" data-active="0">
+<span class="ebtext"></span>
+<div class="ebdone">Done</div>
+</div>
+<div class="emotesbody"></div>
+<div class="routinesbody"></div>
+<div class="emotehint">Right-click an emote to favorite it</div>
+<div class="folderprompt emoteprompt" data-active="0"></div>
+</div>
+<div class="gifspanel">
+<div class="panelbar">
+<span class="paneltitle">GIFs</span>
+<div class="gifsearch"><input type="text" placeholder="Search KLIPY&#8230;" spellcheck="false"></div>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="gifsbody"></div>
+<div class="gifsfoot"><span class="gifsnote">Click a GIF to share it in chat</span><span class="klipymark">Powered by KLIPY</span></div>
+</div>
+<div class="gifcard" data-active="0" title="Click to dismiss">
+<img class="gcimg" alt="">
+<div class="gcfrom"></div>
+</div>
+<div class="appspanel">
+<div class="panelbar">
+<span class="paneltitle">Library</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="appsbody"></div>
+</div>
+<div class="scenespanel">
+<div class="panelbar">
+<span class="paneltitle">Scenes</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="scenesbody"></div>
+<div class="emotehint">Drag a scene onto a Quick Bar slot to fire it with an F-key</div>
+<div class="folderprompt scenesprompt" data-active="0"></div>
+</div>
+<div class="actionbar" data-active="0">
+<div class="abitem">
+<div class="abthumb"></div>
+<div class="abname"></div>
+</div>
+<div class="abactions"></div>
+<div class="abclose" title="Close">&#10005;</div>
+</div>
+</div>
+<div class="tmtip"></div>
+</body>
+</html>

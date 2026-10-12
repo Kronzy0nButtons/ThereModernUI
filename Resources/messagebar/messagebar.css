@@ -1,0 +1,232 @@
+/* ThereModernUI - messagebar.css
+   Toast-style reskin of the message bar, same classes as stock.
+   Author: DANKIES */
+
+:root {
+  --bg: rgba(17, 21, 28, 0.92);
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.22);
+  --text: #e8edf2;
+  --text-dim: #93a1ae;
+  --accent: #38bdf8;
+}
+
+body {
+  margin: 0px;
+  background: transparent;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: var(--text);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+.messagebar {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+/* card */
+.animator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100vw - 8px);
+  height: calc(100vh - 4px);
+  box-sizing: border-box;
+  padding: 7px 14px;
+  background-color: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-bottom: none;
+  border-radius: 12px 12px 0px 0px;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4);
+  opacity: 1;
+  transform: translateY(0px);
+  transition: opacity 240ms ease, transform 240ms ease;
+}
+
+.messagebar[data-msgbaropened="0"] .animator {
+  opacity: 0;
+  transform: translateY(14px);
+  pointer-events: none;
+}
+
+/* type icon */
+
+.left {
+  flex: 0 0 auto;
+}
+
+.left .icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.10);
+  color: #0b1620;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.left .icon[data-state="0"] {
+  opacity: 0.55;
+}
+
+.left .icon::after {
+  content: '\2022';
+  color: var(--text-dim);
+}
+
+.left .icon[data-id="Info"] { background-color: #38bdf8; }
+.left .icon[data-id="Info"]::after { content: 'i'; color: #0b1620; }
+.left .icon[data-id="Error"] { background-color: #f87171; }
+.left .icon[data-id="Error"]::after { content: '!'; color: #0b1620; }
+.left .icon[data-id="Im"] { background-color: #4ade80; }
+.left .icon[data-id="Im"]::after { content: '\2709'; color: #0b1620; }
+.left .icon[data-id="Summon"] { background-color: #fbbf24; }
+.left .icon[data-id="Summon"]::after { content: '\2605'; color: #0b1620; }
+.left .icon[data-id="Receive"] { background-color: #a78bfa; }
+.left .icon[data-id="Receive"]::after { content: '\25BC'; color: #0b1620; font-size: 11px; }
+.left .icon[data-id="QuestInfo"] { background-color: #2dd4bf; }
+.left .icon[data-id="QuestInfo"]::after { content: '?'; color: #0b1620; }
+.left .icon[data-id="PermAllow"] { background-color: #4ade80; }
+.left .icon[data-id="PermAllow"]::after { content: '\2713'; color: #0b1620; }
+.left .icon[data-id="PermDeny"] { background-color: #f87171; }
+.left .icon[data-id="PermDeny"]::after { content: '\2715'; color: #0b1620; }
+
+/* text and buttons */
+
+.middle {
+  flex: 1 1 auto;
+  min-width: 0px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.middle .message {
+  flex: 1 1 auto;
+  min-width: 0px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text);
+  max-height: 50px;
+  overflow: hidden;
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.buttons.big {
+  flex: 0 0 auto;
+}
+
+.buttons.big .button {
+  height: 24px;
+  line-height: 24px;
+  padding: 0px 13px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  background-color: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.buttons.big .button:empty {
+  display: none;
+}
+
+.buttons.big .button[data-enabled="1"]:hover {
+  background-color: var(--accent);
+  border-color: transparent;
+  color: #0b1620;
+}
+
+/* first button is the yes/ok one, give it the accent */
+.buttons.big .button:first-child[data-enabled="1"] {
+  background-color: var(--accent);
+  border-color: transparent;
+  color: #0b1620;
+}
+
+.buttons.big .button:first-child[data-enabled="1"]:hover {
+  filter: brightness(1.15);
+}
+
+/* prev/next */
+
+.buttons.arrows {
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.buttons.arrows .button {
+  width: 18px;
+  height: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-dim);
+}
+
+.buttons.arrows .button svg path {
+  fill: currentColor;
+}
+
+.buttons.arrows .button[data-enabled="1"]:hover {
+  background-color: rgba(255, 255, 255, 0.10);
+  color: var(--text);
+}
+
+.buttons.arrows .button[data-enabled="0"] {
+  opacity: 0.25;
+}
+
+/* help, close */
+
+.right {
+  flex: 0 0 auto;
+}
+
+.buttons.small .button {
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-radius: 6px;
+}
+
+.buttons.small .button[data-id="help"]::after {
+  content: '?';
+}
+
+.buttons.small .button[data-id="close"]::after {
+  content: '\2715';
+}
+
+.buttons.small .button[data-enabled="1"]:hover {
+  background-color: rgba(248, 113, 113, 0.25);
+  color: #fca5a5;
+}
+
+.buttons.small .button[data-enabled="0"] {
+  opacity: 0.25;
+}

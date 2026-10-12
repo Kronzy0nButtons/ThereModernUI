@@ -1,0 +1,509 @@
+diff --git a/FlashProxy/FlashProxy.cpp b/FlashProxy/FlashProxy.cpp
+index 7eb4acb..e1e1f0d 100644
+--- a/FlashProxy/FlashProxy.cpp
++++ b/FlashProxy/FlashProxy.cpp
+@@ -19,6 +19,7 @@
+ #include "ocmm.h"
+ #include "wrl.h"
+ #include "WebView2.h"
++#include "WebView2EnvironmentOptions.h"
+ #include "versionhelpers.h"
+ #include "FlashRequestProxy.h"
+ #include "FlashProxy_i.h"
+@@ -34,6 +35,410 @@ FlashProxyModule g_AtlModule;
+ HINSTANCE g_Instance;
+ WCHAR FlashProxyModule::g_WindowClassName[] = L"ThereEdgeFlashProxy";
+ 
++// ThereModernUI (DANKIES): in-game F1-F12 for the dock's quick bar.
++// Pages opt in with fsCommand("tmuiHotkeys"). A timer on the UI thread polls
++// F1-F12 while a There window has focus and sends "tmui_hotkey" = "F<n>:<seq>".
++// Keys are only read, never eaten. Modifier combos and auto-repeat are ignored.
++static UINT_PTR g_tmuiTimer = 0;
++static HWND g_tmuiTimerWnd = nullptr;
++static ATL::CSimpleArray<FlashProxyModule*> g_tmuiSubscribers;
++static LONG g_tmuiSeq = 0;
++static bool g_tmuiDown[12] = {};
++static const UINT_PTR TMUI_TIMER_ID = 0x7D11;
++
++// put the timer on a proxy window, the game's message loop doesn't
++// dispatch thread timers reliably
++void FlashProxyModule::TmuiStartTimer()
++{
++    if (g_tmuiTimer != 0)
++        KillTimer(g_tmuiTimerWnd, g_tmuiTimer);
++    g_tmuiTimer = 0;
++    g_tmuiTimerWnd = nullptr;
++    for (int i = 0; i < g_tmuiSubscribers.GetSize(); ++i)
++    {
++        HWND wnd = g_tmuiSubscribers[i]->m_proxyWnd;
++        if (wnd != nullptr && IsWindow(wnd))
++        {
++            g_tmuiTimerWnd = wnd;
++            g_tmuiTimer = SetTimer(wnd, TMUI_TIMER_ID, 30, TmuiTimerProc);
++            return;
++        }
++    }
++    if (g_tmuiSubscribers.GetSize() > 0)
++    {
++        g_tmuiTimer = SetTimer(nullptr, 0, 30, TmuiTimerProc);
++    }
++}
++
++void CALLBACK FlashProxyModule::TmuiTimerProc(HWND, UINT, UINT_PTR, DWORD)
++{
++    DWORD pid = 0;
++    HWND fg = GetForegroundWindow();
++    if (fg != nullptr)
++        GetWindowThreadProcessId(fg, &pid);
++    bool active = pid == GetCurrentProcessId();
++    bool modifiers = GetAsyncKeyState(VK_MENU) < 0 || GetAsyncKeyState(VK_CONTROL) < 0 ||
++        GetAsyncKeyState(VK_SHIFT) < 0 || GetAsyncKeyState(VK_LWIN) < 0 || GetAsyncKeyState(VK_RWIN) < 0;
++
++    for (int i = 0; i < 12; ++i)
++    {
++        bool raw = GetAsyncKeyState(VK_F1 + i) < 0;
++        bool down = active && raw;
++        if (down && !g_tmuiDown[i] && !modifiers)
++        {
++            for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++                g_tmuiSubscribers[j]->TmuiPostHotkey(i + 1);
++        }
++        g_tmuiDown[i] = raw;
++    }
++
++    TmuiKeymapTick(active);
++}
++
++HRESULT FlashProxyModule::TmuiPostHotkey(int number)
++{
++    if (!m_ready || m_view == nullptr)
++        return S_OK;
++
++    WCHAR message[96];
++    _snwprintf_s(message, _countof(message), _TRUNCATE,
++        L"setVariable?name=tmui_hotkey&value=F%d%%3A%ld", number, InterlockedIncrement(&g_tmuiSeq));
++    return m_view->PostWebMessageAsString(message);
++}
++
++// same variable as the F-keys, used for R ("R:<seq>")
++HRESULT FlashProxyModule::TmuiPostKey(const WCHAR *key)
++{
++    if (!m_ready || m_view == nullptr)
++        return S_OK;
++
++    WCHAR message[96];
++    _snwprintf_s(message, _countof(message), _TRUNCATE,
++        L"setVariable?name=tmui_hotkey&value=%s%%3A%ld", key, InterlockedIncrement(&g_tmuiSeq));
++    return m_view->PostWebMessageAsString(message);
++}
++
++HRESULT FlashProxyModule::TmuiPostKeymode(const WCHAR *mode)
++{
++    return TmuiPostVariable(L"tmui_keymode", mode);
++}
++
++HRESULT FlashProxyModule::TmuiPostVariable(const WCHAR *name, const WCHAR *value)
++{
++    if (!m_ready || m_view == nullptr)
++        return S_OK;
++
++    WCHAR message[128];
++    _snwprintf_s(message, _countof(message), _TRUNCATE,
++        L"setVariable?name=%s&value=%s", name, value);
++    return m_view->PostWebMessageAsString(message);
++}
++
++// ThereModernUI (DANKIES): WASD in Action Mode.
++// The dock turns it on with fsCommand("tmuiKeymap", "on=1"). It only kicks in
++// while the game is actually in Action Mode, which we spot from the cursor
++// (hidden + clipped to the window), so Insert, guns and menus all count.
++// Holding Ctrl shows the cursor, so the state is frozen while Ctrl is down.
++// While mapping:
++//   WASD = arrow keys, Space = right click (jump), R = tell the dock to reload
++//   every other letter is eaten so nothing ends up in chat
++//   Enter = Action Chat, normal typing until Enter or Esc
++// Ctrl/Alt combos, F-keys and arrows always go through.
++// Pages get "tmui_actionmode" (0/1) and "tmui_keymode" (off/mapped/chat).
++// Each There thread that's had focus gets one hook, kept until we turn off.
++// Moving a single hook around broke when popups grabbed focus.
++static const int KM_MAX_THREADS = 8;
++static HHOOK g_kmHooks[KM_MAX_THREADS] = {};
++static DWORD g_kmThreads[KM_MAX_THREADS] = {};
++static int g_kmThreadCount = 0;
++static bool g_kmAllowed = false;        // the dock's setting (UI thread)
++static bool g_kmActionMode = false;     // detected Action Mode (UI thread)
++static int g_kmActionTicks = 0;         // debounce for a detected change
++static int g_kmActionPosted = -1;       // last state told to pages
++static volatile LONG g_kmEnabled = 0;   // allowed and in Action Mode
++static volatile LONG g_kmChat = 0;
++static volatile LONG g_kmHeld = 0;      // keys we're holding down (bits below)
++static int g_kmPosted = -1;             // last mode told to pages (UI thread)
++static volatile LONG g_kmReload = 0;    // R pressed; the tick tells pages
++static volatile LONG g_kmPeek = 0;      // we're holding Ctrl to show the UI
++static DWORD g_kmPeekUntil = 0;         // failsafe release time (GetTickCount)
++
++// hold Ctrl so Action Mode shows the UI, item menus are hidden otherwise
++static void KmSendCtrl(bool up)
++{
++    INPUT input = {};
++    input.type = INPUT_KEYBOARD;
++    input.ki.wVk = VK_LCONTROL;
++    input.ki.wScan = (WORD)MapVirtualKey(VK_LCONTROL, MAPVK_VK_TO_VSC);
++    input.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
++    SendInput(1, &input, sizeof(input));
++}
++
++static void KmPeek(bool on)
++{
++    if (on)
++    {
++        g_kmPeekUntil = GetTickCount() + 2000;
++        if (!InterlockedExchange(&g_kmPeek, 1))
++            KmSendCtrl(false);
++    }
++    else if (InterlockedExchange(&g_kmPeek, 0))
++    {
++        KmSendCtrl(true);
++    }
++}
++
++static const LONG KM_JUMP = 0x10;
++static const struct { WPARAM from; WORD to; LONG bit; } g_kmMap[] =
++{
++    { 'W', VK_UP, 0x1 }, { 'A', VK_LEFT, 0x2 }, { 'S', VK_DOWN, 0x4 }, { 'D', VK_RIGHT, 0x8 },
++};
++
++static void KmSendKey(WORD vk, bool up)
++{
++    INPUT input = {};
++    input.type = INPUT_KEYBOARD;
++    input.ki.wVk = vk;
++    input.ki.wScan = (WORD)MapVirtualKey(vk, MAPVK_VK_TO_VSC);
++    input.ki.dwFlags = KEYEVENTF_EXTENDEDKEY | (up ? KEYEVENTF_KEYUP : 0);
++    SendInput(1, &input, sizeof(input));
++}
++
++static void KmSendJump(bool up)
++{
++    INPUT input = {};
++    input.type = INPUT_MOUSE;
++    input.mi.dwFlags = up ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_RIGHTDOWN;
++    SendInput(1, &input, sizeof(input));
++}
++
++// let go of everything we're holding
++static void KmReleaseAll()
++{
++    LONG held = InterlockedExchange(&g_kmHeld, 0);
++    for (const auto &m : g_kmMap)
++    {
++        if (held & m.bit)
++            KmSendKey(m.to, true);
++    }
++    if (held & KM_JUMP)
++        KmSendJump(true);
++}
++
++static bool KmIsCharacterKey(WPARAM vk)
++{
++    return vk == VK_SPACE || (vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z') ||
++        (vk >= VK_OEM_1 && vk <= VK_OEM_3) || (vk >= VK_OEM_4 && vk <= VK_OEM_8) || vk == VK_OEM_102;
++}
++
++// leave native text boxes alone
++static bool KmFocusIsTextBox()
++{
++    HWND focus = GetFocus();
++    if (focus == nullptr)
++        return false;
++    WCHAR cls[64] = {};
++    GetClassName(focus, cls, _countof(cls));
++    return _wcsnicmp(cls, L"Edit", 4) == 0 || _wcsnicmp(cls, L"RichEdit", 8) == 0 ||
++        _wcsnicmp(cls, L"ComboBox", 8) == 0;
++}
++
++LRESULT CALLBACK FlashProxyModule::TmuiKeymapProc(int code, WPARAM wParam, LPARAM lParam)
++{
++    if (code != HC_ACTION || !g_kmEnabled || KmFocusIsTextBox())
++        return CallNextHookEx(nullptr, code, wParam, lParam);
++
++    bool up = (lParam & 0x80000000) != 0;
++    bool repeat = (lParam & 0x40000000) != 0;
++
++    if (g_kmChat)
++    {
++        // Action Chat, type normally until Enter or Esc
++        if (!up && (wParam == VK_RETURN || wParam == VK_ESCAPE))
++            InterlockedExchange(&g_kmChat, 0);
++        return CallNextHookEx(nullptr, code, wParam, lParam);
++    }
++
++    // let real Ctrl/Alt combos through (but not our own peek Ctrl)
++    if ((GetKeyState(VK_CONTROL) < 0 && !g_kmPeek) || GetKeyState(VK_MENU) < 0)
++        return CallNextHookEx(nullptr, code, wParam, lParam);
++
++    if (wParam == VK_RETURN)
++    {
++        if (!up)
++        {
++            KmReleaseAll();
++            InterlockedExchange(&g_kmChat, 1);
++        }
++        return 1;
++    }
++
++    for (const auto &m : g_kmMap)
++    {
++        if (wParam != m.from)
++            continue;
++        if (!up)
++        {
++            InterlockedOr(&g_kmHeld, m.bit);
++            KmSendKey(m.to, false);
++        }
++        else if (InterlockedAnd(&g_kmHeld, ~m.bit) & m.bit)
++        {
++            KmSendKey(m.to, true);
++        }
++        return 1;
++    }
++
++    if (wParam == VK_SPACE)
++    {
++        if (!up && !repeat)
++        {
++            InterlockedOr(&g_kmHeld, KM_JUMP);
++            KmSendJump(false);
++        }
++        else if (up && (InterlockedAnd(&g_kmHeld, ~KM_JUMP) & KM_JUMP))
++        {
++            KmSendJump(true);
++        }
++        return 1;
++    }
++
++    // R: the dock runs the gun's Reload action
++    if (wParam == 'R')
++    {
++        if (!up && !repeat)
++            InterlockedExchange(&g_kmReload, 1);
++        return 1;
++    }
++
++    if (KmIsCharacterKey(wParam))
++        return 1;
++
++    return CallNextHookEx(nullptr, code, wParam, lParam);
++}
++
++// Action Mode = cursor hidden and clipped inside the There window
++static bool KmDetectActionMode()
++{
++    RECT clip = {};
++    RECT win = {};
++    if (!GetClipCursor(&clip) || !GetWindowRect(GetForegroundWindow(), &win))
++        return false;
++    bool clipped = (clip.right - clip.left) < GetSystemMetrics(SM_CXVIRTUALSCREEN) ||
++        (clip.bottom - clip.top) < GetSystemMetrics(SM_CYVIRTUALSCREEN);
++    clipped = clipped && clip.left >= win.left && clip.top >= win.top &&
++        clip.right <= win.right && clip.bottom <= win.bottom;
++    CURSORINFO cursor = {};
++    cursor.cbSize = sizeof(cursor);
++    bool hidden = GetCursorInfo(&cursor) && (cursor.flags & CURSOR_SHOWING) == 0;
++    return clipped && hidden;
++}
++
++void FlashProxyModule::TmuiSetKeymap(bool on)
++{
++    g_kmAllowed = on;
++    if (!on)
++    {
++        InterlockedExchange(&g_kmEnabled, 0);
++        InterlockedExchange(&g_kmChat, 0);
++        for (int i = 0; i < g_kmThreadCount; ++i)
++        {
++            if (g_kmHooks[i] != nullptr)
++                UnhookWindowsHookEx(g_kmHooks[i]);
++            g_kmHooks[i] = nullptr;
++            g_kmThreads[i] = 0;
++        }
++        g_kmThreadCount = 0;
++        KmReleaseAll();
++        KmPeek(false);
++    }
++}
++
++// called on every timer tick (UI thread)
++void FlashProxyModule::TmuiKeymapTick(bool active)
++{
++    if (g_kmPeek && (int)(GetTickCount() - g_kmPeekUntil) >= 0)
++        KmPeek(false);
++
++    // a change has to hold for 4 ticks (~120ms), ignore it while Ctrl is down
++    if (active && GetAsyncKeyState(VK_CONTROL) >= 0)
++    {
++        bool detected = KmDetectActionMode();
++        g_kmActionTicks = detected != g_kmActionMode ? g_kmActionTicks + 1 : 0;
++        if (g_kmActionTicks >= 4)
++        {
++            g_kmActionMode = detected;
++            g_kmActionTicks = 0;
++        }
++    }
++    LONG enabled = g_kmAllowed && g_kmActionMode ? 1 : 0;
++    if (InterlockedExchange(&g_kmEnabled, enabled) && !enabled)
++    {
++        InterlockedExchange(&g_kmChat, 0);
++        KmReleaseAll();
++    }
++    if ((g_kmActionMode ? 1 : 0) != g_kmActionPosted)
++    {
++        g_kmActionPosted = g_kmActionMode ? 1 : 0;
++        for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++            g_tmuiSubscribers[j]->TmuiPostVariable(L"tmui_actionmode", g_kmActionMode ? L"1" : L"0");
++    }
++
++    if (g_kmAllowed && active)
++    {
++        // hook the focused window's thread if we haven't seen it yet
++        // (failures are remembered too so we don't retry every tick)
++        DWORD thread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
++        bool known = thread == 0;
++        for (int i = 0; i < g_kmThreadCount && !known; ++i)
++            known = g_kmThreads[i] == thread;
++        if (!known && g_kmThreadCount < KM_MAX_THREADS)
++        {
++            g_kmThreads[g_kmThreadCount] = thread;
++            g_kmHooks[g_kmThreadCount] = SetWindowsHookEx(WH_KEYBOARD, TmuiKeymapProc, nullptr, thread);
++            g_kmThreadCount++;
++        }
++    }
++
++    // never leave a key stuck down: release it once the real key is up,
++    // and release everything when There loses focus
++    LONG held = g_kmHeld;
++    if (held != 0)
++    {
++        if (!active)
++        {
++            KmReleaseAll();
++        }
++        else
++        {
++            for (const auto &m : g_kmMap)
++            {
++                if ((held & m.bit) && GetAsyncKeyState((int)m.from) >= 0 &&
++                    (InterlockedAnd(&g_kmHeld, ~m.bit) & m.bit))
++                    KmSendKey(m.to, true);
++            }
++            if ((held & KM_JUMP) && GetAsyncKeyState(VK_SPACE) >= 0 &&
++                (InterlockedAnd(&g_kmHeld, ~KM_JUMP) & KM_JUMP))
++                KmSendJump(true);
++        }
++    }
++
++    if (InterlockedExchange(&g_kmReload, 0) && g_kmEnabled)
++    {
++        for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++            g_tmuiSubscribers[j]->TmuiPostKey(L"R");
++    }
++
++    int mode = !g_kmEnabled ? 0 : (g_kmChat ? 2 : 1);
++    if (mode != g_kmPosted)
++    {
++        g_kmPosted = mode;
++        const WCHAR *name = mode == 0 ? L"off" : (mode == 1 ? L"mapped" : L"chat");
++        for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++            g_tmuiSubscribers[j]->TmuiPostKeymode(name);
++    }
++}
++
+ void Log(const WCHAR *format, ...)
+ {
+ #ifdef THERE_LOGGING
+@@ -165,6 +570,12 @@ FlashProxyModule::FlashProxyModule():
+ 
+ FlashProxyModule::~FlashProxyModule()
+ {
++    // ThereModernUI: unsubscribe, stop the timer if nobody's left
++    if (g_tmuiSubscribers.Remove(this) && (g_tmuiTimerWnd == nullptr || g_tmuiTimerWnd == m_proxyWnd))
++        TmuiStartTimer();
++    if (g_tmuiSubscribers.GetSize() == 0)
++        TmuiSetKeymap(false);
++
+     if (m_view != nullptr)
+     {
+         m_view->remove_WebMessageReceived(m_webMessageReceivedToken);
+@@ -513,7 +924,13 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::DoVerb(LONG iVerb, LPMSG lpmsg, IOle
+                 }
+             }
+ 
+-            if (FAILED(CreateCoreWebView2EnvironmentWithOptions(m_webView2Folder, m_userDataFolder, nullptr, this)))
++            // ThereModernUI: let HUD pages play sound without a click first
++            // (toast sound, music). EdgeFlash is only used by the HUD.
++            auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
++            if (options != nullptr)
++                options->put_AdditionalBrowserArguments(L"--autoplay-policy=no-user-gesture-required");
++
++            if (FAILED(CreateCoreWebView2EnvironmentWithOptions(m_webView2Folder, m_userDataFolder, options.Get(), this)))
+                 return E_FAIL;
+ 
+             return S_OK;
+@@ -996,6 +1413,35 @@ HRESULT FlashProxyModule::OnWebMessageReceived(ICoreWebView2 *sender, ICoreWebVi
+     if (_wcsicmp(bcommand, L"getKeyboardFocus") == 0)
+         return E_NOTIMPL;
+ 
++    // ThereModernUI: page wants in-game F-keys
++    if (_wcsicmp(bcommand, L"tmuiHotkeys") == 0)
++    {
++        if (g_tmuiSubscribers.Find(this) < 0)
++            g_tmuiSubscribers.Add(this);
++        if (g_tmuiTimer == 0 || g_tmuiTimerWnd == nullptr)
++            TmuiStartTimer();
++        return S_OK;
++    }
++
++    // ThereModernUI: WASD mapper on/off
++    if (_wcsicmp(bcommand, L"tmuiKeymap") == 0)
++    {
++        if (g_tmuiSubscribers.Find(this) < 0)
++            g_tmuiSubscribers.Add(this);
++        if (g_tmuiTimer == 0 || g_tmuiTimerWnd == nullptr)
++            TmuiStartTimer();
++        TmuiSetKeymap(_wcsicmp(bquery, L"on=1") == 0);
++        return S_OK;
++    }
++
++    // ThereModernUI: hold Ctrl while a page uses a menu in Action Mode
++    // (released on "on=0" or after 2s)
++    if (_wcsicmp(bcommand, L"tmuiPeek") == 0)
++    {
++        KmPeek(_wcsicmp(bquery, L"on=1") == 0);
++        return S_OK;
++    }
++
+     VARIANTARG vargs[2];
+     vargs[0].vt = VT_BSTR;
+     vargs[0].bstrVal = bquery;
+diff --git a/FlashProxy/FlashProxy.h b/FlashProxy/FlashProxy.h
+index b3a3f78..638f82d 100644
+--- a/FlashProxy/FlashProxy.h
++++ b/FlashProxy/FlashProxy.h
+@@ -227,6 +227,17 @@ protected:
+ public:
+     static LRESULT APIENTRY ChildWndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+ 
++    // ThereModernUI: in-game F-keys and the Action Mode key mapper
++    static void CALLBACK TmuiTimerProc(HWND hWnd, UINT msg, UINT_PTR id, DWORD time);
++    static void TmuiStartTimer();
++    HRESULT TmuiPostHotkey(int number);
++    HRESULT TmuiPostKeymode(const WCHAR *mode);
++    HRESULT TmuiPostVariable(const WCHAR *name, const WCHAR *value);
++    HRESULT TmuiPostKey(const WCHAR *key);
++    static LRESULT CALLBACK TmuiKeymapProc(int code, WPARAM wParam, LPARAM lParam);
++    static void TmuiSetKeymap(bool on);
++    static void TmuiKeymapTick(bool active);
++
+ protected:
+     ULONG                                    m_refCount;
+     QACONTAINER                              m_qaContainer;
