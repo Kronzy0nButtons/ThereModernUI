@@ -7,11 +7,11 @@
 // just links to the download. A failed check never locks anything.
 
 const TmuiUpdate = {
-  version: '1.0.2',
+  version: '1.0.3',
   // owner/repo on GitHub, empty turns the check off
   repo: 'Kronzy0nButtons/ThereModernUI',
 
-  CHECK_EVERY_MS: 6 * 60 * 60 * 1000,
+  CHECK_EVERY_MS: 15 * 60 * 1000,
   STORE_KEY: 'tmui.update',
   blocked: false,
   latest: null,

@@ -239,7 +239,7 @@ without the key, and refuses to commit if the key shows up anywhere staged.
    build and preview without publishing anything. Needs the GitHub CLI,
    signed in once with `gh auth login`.
 
-Every installed copy checks the repo's latest release (once every 6 hours,
+Every installed copy checks the repo's latest release (at most every 15 minutes,
 GitHub's public API, no key). If it is newer, the dock and the communicator
 lock behind an overlay whose only button opens the release page in the game
 browser; players close There, run the new setup over the top and restart.

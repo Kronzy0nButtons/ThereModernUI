@@ -39,7 +39,11 @@
     chat: false,
     typed: '',
     chatVer: 1,
-    chatLines: [],
+    chatLines: [
+      { ver: 1, author: 'Kronzy', text: 'yo whats good' },
+      { ver: 1, author: 'Lil_Shell', text: "'wave" },
+      { ver: 1, author: 'BeachBum', text: 'anyone up for paintball later?' },
+    ],
     clothes: {
       501: { name: 'Camo Cap', type: 'hat', wearing: 1, art: 'cap' },
       502: { name: 'White Tee', type: 'upperbody', wearing: 1, art: 'tee' },
@@ -245,16 +249,15 @@
   }
 
   // ---------- fake chat feed (version gated, like the real one) ----------
+  // Like the real client: without lastVer it answers straight away with the recent
+  // buffer (newest last); with lastVer it holds the request until something new.
   function chatFeed(lastVer, reply) {
+    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const send = function() {
-      const lines = lastVer == null ? [] : world.chatLines.filter(l => l.ver > Number(lastVer));
-      const msgs = lines.map(l => `<msg><authorName>${l.author}</authorName><text>${l.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text></msg>`).join('');
-      // the first poll gets the starting version, so anything said after the page
-      // loaded (even before that poll returns) still comes through
-      const ver = lastVer == null ? 1 : world.chatVer;
-      reply(`<?xml version="1.0"?><Answer><Result>1</Result><version>${ver}</version>${msgs}</Answer>`);
+      const lines = lastVer == null ? world.chatLines.slice(-40) : world.chatLines.filter(l => l.ver > Number(lastVer));
+      const msgs = lines.map(l => `<msg><authorName>${esc(l.author)}</authorName><text>${esc(l.text)}</text></msg>`).join('');
+      reply(`<?xml version="1.0"?><Answer><Result>1</Result><version>${world.chatVer}</version>${msgs}</Answer>`);
     };
-    // the real one holds the request until there's something new
     if (lastVer != null && !world.chatLines.some(l => l.ver > Number(lastVer))) {
       setTimeout(send, 1200);
     } else {

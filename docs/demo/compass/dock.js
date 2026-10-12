@@ -774,6 +774,7 @@ There.init({
     if (need && !There.data.chatPollOn) {
       There.data.chatPollOn = true;
       There.data.shadowVer = undefined;
+      There.data.chatSeen = null;
       There.shadowPoll();
     } else if (!need && There.data.chatPollOn) {
       There.data.chatPollOn = false;
@@ -784,6 +785,13 @@ There.init({
   // Poll the local chat feed (version-gated, only NEW lines come back) and hand
   // lines to Shadow (replay emote tokens) and Party sync (play other TMUI users'
   // tracks). Same trick There Edge's shortcut bar uses for its puppeteer.
+  // Read the chat feed with quick requests only. Asking without lastVer makes the
+  // client answer straight away with its current chat buffer; we work out the new
+  // lines ourselves. Don't go back to long polls (lastVer): an abandoned long poll
+  // stays open inside the client's single threaded server, they pile up, and other
+  // windows' feeds (the Command Bar's /commands) stop getting answers.
+  CHAT_POLL_MS: 2000,
+
   shadowPoll: function() {
     if (!There.data.chatPollOn) {
       return;
@@ -792,77 +800,104 @@ There.init({
       There.setNamedTimer('shadow-poll', 2000, There.shadowPoll);
       return;
     }
-    let query = { Oid: 1, request: Math.random() };
-    if (There.data.shadowVer != undefined) {
-      query.lastVer = There.data.shadowVer;
-    }
-    // The feed holds the request open until new chat arrives, and the local server
-    // can leave one hanging (e.g. behind the clothing load). There.fetch has no
-    // timeout so a hung request would kill the feed for good: 25s timeout, then repoll.
     const host = There.data.host || There.variables.there_resourceshost || '127.0.0.1:9999';
     $.ajax({
       url: `http://${host}/VersionedXmlSvc/CommMessageData`,
-      data: query,
+      data: { Oid: 1, request: Math.random() },
       dataType: 'xml',
-      timeout: 25000,
+      timeout: 15000,
       success: function(xml) {
         try {
           const ver = xml.getElementsByTagName('version')[0]?.childNodes[0]?.nodeValue;
-          const firstPoll = There.data.shadowVer == undefined;
-          if (ver != undefined) {
-            There.data.shadowVer = ver;
+          if (ver != undefined && ver === There.data.shadowVer) {
+            return; // nothing new
           }
-          // skip the backlog on the first poll, only live lines count
-          if (!firstPoll) {
-            const target = (There.data.shadowTarget || '').toLowerCase();
-            const me = (There.variables.there_pilotname || '').toLowerCase();
-            for (const xmlMsg of xml.getElementsByTagName('msg')) {
-              const author = xmlMsg.getElementsByTagName('authorName')[0]?.childNodes[0]?.nodeValue || '';
-              let text = '';
-              const xmlText = xmlMsg.getElementsByTagName('text')[0];
-              if (xmlText) {
-                for (const child of xmlText.childNodes) {
-                  if (child.tagName == undefined) {
-                    text += child.nodeValue;
-                  }
-                }
-              }
-              // party sync: someone broadcast a track, play along
-              if (There.prefs().party && author.toLowerCase() != me) {
-                // "[TMUI] [DJ] [<id>]" (older docks sent "[TMUI] np:<id>")
-                const pm = text.match(/\[TMUI\] (?:\[DJ\] \[([A-Za-z0-9_-]{11})\]|np:([A-Za-z0-9_-]{11}))/);
-                const pid = pm && (pm[1] || pm[2]);
-                if (pid && There.data.lastPartyId != pid) {
-                  There.data.lastPartyId = pid;
-                  There.playPartyTrack(pid, author);
-                }
-              }
-              // GIFs: someone (maybe you) shared "[TMUI] [GIF] [<id>]"
-              if (There.prefs().gifs) {
-                const gm = text.match(There.GIF_TAG);
-                if (gm) {
-                  There.receiveGif(gm[1], author);
-                }
-              }
-              // shadow: replay the target's emotes. all forms count: 'twist (bubble),
-              // 'twist' (hidden), ['twist'] (how the feed records hidden). resend as hidden
-              if (There.data.shadowOn && author.toLowerCase() == target) {
-                for (const token of text.split(/\s+/)) {
-                  const m = token.match(/^\[?(['`]+)([a-zA-Z0-9]+)['`]*\]?$/);
-                  if (m) {
-                    There.sendChat(m[1][0] + m[2] + m[1][0]);
-                  }
+          There.data.shadowVer = ver;
+          const lines = [];
+          for (const xmlMsg of xml.getElementsByTagName('msg')) {
+            const author = xmlMsg.getElementsByTagName('authorName')[0]?.childNodes[0]?.nodeValue || '';
+            let text = '';
+            const xmlText = xmlMsg.getElementsByTagName('text')[0];
+            if (xmlText) {
+              for (const child of xmlText.childNodes) {
+                if (child.tagName == undefined) {
+                  text += child.nodeValue;
                 }
               }
             }
+            lines.push({ author: author, text: text, key: author + '\u0001' + text });
+          }
+          const prev = There.data.chatSeen;
+          There.data.chatSeen = lines.map(l => l.key);
+          // first read is the backlog, only live lines count
+          if (!prev) {
+            return;
+          }
+          for (const line of There.newChatLines(prev, lines)) {
+            There.onChatLine(line.author, line.text);
           }
         } catch (error) {
         }
       },
       complete: function() {
-        There.setNamedTimer('shadow-poll', 1000, There.shadowPoll);
+        There.setNamedTimer('shadow-poll', There.CHAT_POLL_MS, There.shadowPoll);
       },
     });
+  },
+
+  // The buffer slides: old lines drop off the front, new ones land at the end.
+  // Find where the last few lines we saw now sit and take everything after them.
+  // A 5 line anchor keeps a repeated message (same GIF twice) from being missed.
+  newChatLines: function(prevKeys, lines) {
+    for (let len = Math.min(5, prevKeys.length); len > 0; len--) {
+      const tail = prevKeys.slice(prevKeys.length - len);
+      for (let end = lines.length - 1; end >= len - 1; end--) {
+        let hit = true;
+        for (let k = 0; k < len; k++) {
+          if (lines[end - len + 1 + k].key !== tail[k]) {
+            hit = false;
+            break;
+          }
+        }
+        if (hit) {
+          return lines.slice(end + 1);
+        }
+      }
+    }
+    // none of what we saw is left, so it's all new
+    return prevKeys.length ? lines : [];
+  },
+
+  onChatLine: function(author, text) {
+    const target = (There.data.shadowTarget || '').toLowerCase();
+    const me = (There.variables.there_pilotname || '').toLowerCase();
+    // party sync: someone broadcast a track, play along
+    if (There.prefs().party && author.toLowerCase() != me) {
+      // "[TMUI] [DJ] [<id>]" (older docks sent "[TMUI] np:<id>")
+      const pm = text.match(/\[TMUI\] (?:\[DJ\] \[([A-Za-z0-9_-]{11})\]|np:([A-Za-z0-9_-]{11}))/);
+      const pid = pm && (pm[1] || pm[2]);
+      if (pid && There.data.lastPartyId != pid) {
+        There.data.lastPartyId = pid;
+        There.playPartyTrack(pid, author);
+      }
+    }
+    // GIFs: someone (maybe you) shared "[TMUI] [GIF] [<id>]"
+    if (There.prefs().gifs) {
+      const gm = text.match(There.GIF_TAG);
+      if (gm) {
+        There.receiveGif(gm[1], author);
+      }
+    }
+    // shadow: replay the target's emotes. all forms count: 'twist (bubble),
+    // 'twist' (hidden), ['twist'] (how the feed records hidden). resend as hidden
+    if (There.data.shadowOn && author.toLowerCase() == target) {
+      for (const token of text.split(/\s+/)) {
+        const m = token.match(/^\[?(['`]+)([a-zA-Z0-9]+)['`]*\]?$/);
+        if (m) {
+          There.sendChat(m[1][0] + m[2] + m[1][0]);
+        }
+      }
+    }
   },
 
   /* ------- Scenes: one action that chains many -------
