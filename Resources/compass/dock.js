@@ -212,6 +212,10 @@ There.init({
         if (blocked && There.data.panel) {
           There.closePanel();
         }
+        // the overlay sits over the dock area: the input shape has to cover it
+        // or the pinned window clips it out of existence
+        There.data.shapeSent = null;
+        There.syncWindowShape();
       });
     }
     There.setNamedTimer('avatar-failsafe', 30000, function() {
@@ -2234,6 +2238,7 @@ There.init({
       take(this);
     });
     take($('.tmtip[data-active="1"]')[0]);
+    take($('.tmui-update')[0]);
     const value = rects.join(';');
     if (value === There.data.shapeSent) {
       return;
