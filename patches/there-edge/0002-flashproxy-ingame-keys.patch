@@ -1,5 +1,5 @@
 diff --git a/FlashProxy/FlashProxy.cpp b/FlashProxy/FlashProxy.cpp
-index 7eb4acb..e1e1f0d 100644
+index 7eb4acb..b76df06 100644
 --- a/FlashProxy/FlashProxy.cpp
 +++ b/FlashProxy/FlashProxy.cpp
 @@ -19,6 +19,7 @@
@@ -10,7 +10,7 @@ index 7eb4acb..e1e1f0d 100644
  #include "versionhelpers.h"
  #include "FlashRequestProxy.h"
  #include "FlashProxy_i.h"
-@@ -34,6 +35,410 @@ FlashProxyModule g_AtlModule;
+@@ -34,6 +35,521 @@ FlashProxyModule g_AtlModule;
  HINSTANCE g_Instance;
  WCHAR FlashProxyModule::g_WindowClassName[] = L"ThereEdgeFlashProxy";
  
@@ -24,6 +24,103 @@ index 7eb4acb..e1e1f0d 100644
 +static LONG g_tmuiSeq = 0;
 +static bool g_tmuiDown[12] = {};
 +static const UINT_PTR TMUI_TIMER_ID = 0x7D11;
++// ThereModernUI (DANKIES): chat feed relay.
++// The client's chat feed doesn't serve two readers independently: new lines go
++// to whichever request it answers next, so when the dock read it too, the
++// Command Bar missed lines and /commands typed in chat went unanswered. Now when
++// any other page reads the feed, we copy its answer and hand it to the dock as
++// "tmui_chatfeed" = "<0 backlog | 1 new>|<xml>", and the dock stops reading.
++static CComAutoCriticalSection g_tmuiRelayLock;
++static ATL::CSimpleArray<CStringW> g_tmuiRelayQueue;
++static volatile LONG g_tmuiReaderSeen = 0;
++static LONG g_tmuiReaderSeq = 0;
++
++// the other page just asked the feed: tell the dock straight away (before any
++// answer) so it never starts reading the feed itself
++void TmuiRelayReaderSeen()
++{
++    InterlockedExchange(&g_tmuiReaderSeen, 1);
++}
++
++// a feed request from a page that isn't one of ours, while the dock is listening
++bool TmuiRelayWanted(void *owner)
++{
++    return g_tmuiSubscribers.GetSize() > 0 &&
++        g_tmuiSubscribers.Find(static_cast<FlashProxyModule *>(owner)) < 0;
++}
++
++// any thread: queue it, TmuiRelayDeliver sends it from the UI thread
++void TmuiRelayQueue(const char *data, int len, bool backlog)
++{
++    if (len <= 0 || len > 512 * 1024)
++        return;
++    int wlen = MultiByteToWideChar(CP_UTF8, 0, data, len, nullptr, 0);
++    if (wlen <= 0)
++        return;
++    CStringW value(backlog ? L"0|" : L"1|");
++    CStringW xml;
++    MultiByteToWideChar(CP_UTF8, 0, data, len, xml.GetBuffer(wlen), wlen);
++    xml.ReleaseBuffer(wlen);
++    value += xml;
++    g_tmuiRelayLock.Lock();
++    g_tmuiRelayQueue.Add(value);
++    g_tmuiRelayLock.Unlock();
++}
++
++void FlashProxyModule::TmuiRelayDeliver()
++{
++    if (InterlockedExchange(&g_tmuiReaderSeen, 0))
++    {
++        WCHAR seq[32];
++        _snwprintf_s(seq, _countof(seq), _TRUNCATE, L"1%%3A%ld", ++g_tmuiReaderSeq);
++        for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++            g_tmuiSubscribers[j]->TmuiPostVariable(L"tmui_chatreader", seq);
++    }
++    ATL::CSimpleArray<CStringW> items;
++    g_tmuiRelayLock.Lock();
++    for (int i = 0; i < g_tmuiRelayQueue.GetSize(); ++i)
++        items.Add(g_tmuiRelayQueue[i]);
++    g_tmuiRelayQueue.RemoveAll();
++    g_tmuiRelayLock.Unlock();
++    for (int i = 0; i < items.GetSize(); ++i)
++    {
++        for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++            g_tmuiSubscribers[j]->TmuiPostChat(items[i]);
++    }
++}
++
++HRESULT FlashProxyModule::TmuiPostChat(const WCHAR *value)
++{
++    if (!m_ready || m_view == nullptr)
++        return S_OK;
++    // percent-encode as UTF-8 ourselves: Encode() has a 10000 char buffer and a
++    // chat answer can be bigger than that once escaped
++    int blen = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
++    if (blen <= 0)
++        return E_FAIL;
++    CStringA utf8;
++    WideCharToMultiByte(CP_UTF8, 0, value, -1, utf8.GetBuffer(blen), blen, nullptr, nullptr);
++    utf8.ReleaseBuffer();
++    CStringW message(L"setVariable?name=tmui_chatfeed&value=");
++    static const WCHAR hex[] = L"0123456789ABCDEF";
++    for (int i = 0; i < utf8.GetLength(); ++i)
++    {
++        unsigned char c = static_cast<unsigned char>(utf8[i]);
++        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
++            c == '-' || c == '_' || c == '.' || c == '~')
++        {
++            message += static_cast<WCHAR>(c);
++        }
++        else
++        {
++            message += L'%';
++            message += hex[c >> 4];
++            message += hex[c & 15];
++        }
++    }
++    return m_view->PostWebMessageAsString(message);
++}
++
 +
 +// put the timer on a proxy window, the game's message loop doesn't
 +// dispatch thread timers reliably
@@ -71,7 +168,21 @@ index 7eb4acb..e1e1f0d 100644
 +        g_tmuiDown[i] = raw;
 +    }
 +
++    // right mouse button held in game = vehicle boost, the dock's boost gauge
++    // follows it. posted only on change
++    {
++        static LONG rmbLast = -1;
++        LONG rmb = (active && GetAsyncKeyState(VK_RBUTTON) < 0) ? 1 : 0;
++        if (rmb != rmbLast)
++        {
++            rmbLast = rmb;
++            for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++                g_tmuiSubscribers[j]->TmuiPostVariable(L"tmui_rmb", rmb ? L"1" : L"0");
++        }
++    }
++
 +    TmuiKeymapTick(active);
++    TmuiRelayDeliver();
 +}
 +
 +HRESULT FlashProxyModule::TmuiPostHotkey(int number)
@@ -421,7 +532,18 @@ index 7eb4acb..e1e1f0d 100644
  void Log(const WCHAR *format, ...)
  {
  #ifdef THERE_LOGGING
-@@ -165,6 +570,12 @@ FlashProxyModule::FlashProxyModule():
+@@ -123,6 +639,10 @@ FlashProxyModule::FlashProxyModule():
+     m_clientWnd(nullptr),
+     m_maskRects(),
+     m_maskRectCount(0),
++    m_tmuiShapeOn(false),
++    m_tmuiShapeBox(),
++    m_tmuiShapeRects(),
++    m_tmuiShapeCount(0),
+     m_encodeBuffer(),
+     m_identity(Identity::Unknown),
+     m_visibilityMask(0),
+@@ -165,6 +685,12 @@ FlashProxyModule::FlashProxyModule():
  
  FlashProxyModule::~FlashProxyModule()
  {
@@ -434,7 +556,7 @@ index 7eb4acb..e1e1f0d 100644
      if (m_view != nullptr)
      {
          m_view->remove_WebMessageReceived(m_webMessageReceivedToken);
-@@ -513,7 +924,13 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::DoVerb(LONG iVerb, LPMSG lpmsg, IOle
+@@ -513,7 +1039,13 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::DoVerb(LONG iVerb, LPMSG lpmsg, IOle
                  }
              }
  
@@ -449,7 +571,31 @@ index 7eb4acb..e1e1f0d 100644
                  return E_FAIL;
  
              return S_OK;
-@@ -996,6 +1413,35 @@ HRESULT FlashProxyModule::OnWebMessageReceived(ICoreWebView2 *sender, ICoreWebVi
+@@ -580,6 +1112,23 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::QueryHitPoint(DWORD dwAspect, LPCREC
+         return S_OK;
+     }
+ 
++    // ThereModernUI: in shape mode only the page's own rects count as a hit, so
++    // the game can pick nametags and the like through the unused rest
++    if (m_tmuiShapeOn)
++    {
++        for (LONG i = 0; i < m_tmuiShapeCount; ++i)
++        {
++            const RECT &shapeRect = m_tmuiShapeRects[i];
++            if (point.x >= shapeRect.left && point.y >= shapeRect.top && point.x < shapeRect.right && point.y < shapeRect.bottom)
++            {
++                *pHitResult = HITRESULT_HIT;
++                return S_OK;
++            }
++        }
++        *pHitResult = HITRESULT_TRANSPARENT;
++        return S_OK;
++    }
++
+     for (LONG i = 0; i < m_maskRectCount; ++i)
+     {
+         RECT maskRect = m_maskRects[m_maskRectCount];
+@@ -996,6 +1545,56 @@ HRESULT FlashProxyModule::OnWebMessageReceived(ICoreWebView2 *sender, ICoreWebVi
      if (_wcsicmp(bcommand, L"getKeyboardFocus") == 0)
          return E_NOTIMPL;
  
@@ -482,14 +628,191 @@ index 7eb4acb..e1e1f0d 100644
 +        return S_OK;
 +    }
 +
++    // ThereModernUI: clip the window to the parts the page actually uses, so the
++    // dock can keep a constant window size (resizing is what made it wander: the
++    // client re-anchors the top-left corner and clamps the window back on screen).
++    // Everything outside the rects is click-through to the world. Acked with
++    // tmui_shape=1 so the page knows this build understands the command.
++    if (_wcsicmp(bcommand, L"tmuiShape") == 0)
++    {
++        TmuiApplyShape(bquery);
++        TmuiPostVariable(L"tmui_shape", L"1");
++        return S_OK;
++    }
++
++    // ThereModernUI: bring this window above its HUD siblings (the message bar
++    // asks for this so its toasts sit over the dock instead of behind it)
++    if (_wcsicmp(bcommand, L"tmuiRaise") == 0)
++    {
++        if (m_proxyWnd != nullptr)
++            SetWindowPos(m_proxyWnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
++        return S_OK;
++    }
++
      VARIANTARG vargs[2];
      vargs[0].vt = VT_BSTR;
      vargs[0].bstrVal = bquery;
+@@ -1066,7 +1665,7 @@ HRESULT FlashProxyModule::OnWebResourceRequested(ICoreWebView2 *sender, ICoreWeb
+         return S_OK;
+     }
+ 
+-    CComPtr<FlashRequestProxy> flashRequestProxy(new FlashRequestProxy(m_environment, args));
++    CComPtr<FlashRequestProxy> flashRequestProxy(new FlashRequestProxy(m_environment, args, this));
+     if (flashRequestProxy == nullptr)
+         return E_FAIL;
+ 
+@@ -1217,6 +1816,15 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
+     if (m_proxyWnd == nullptr)
+         return S_OK;
+ 
++    if (m_tmuiShapeOn)
++    {
++        // ThereModernUI: the real window tracks the used part of the client's rect
++        TmuiPlaceWindow();
++        SetVisibility(m_visibilityMask);
++        GuessToolbarVisibility();
++        return S_OK;
++    }
++
+     SetWindowPos(m_proxyWnd, nullptr, m_pos.cx, m_pos.cy, max(1, m_size.cx), max(1, m_size.cy), flags | SWP_NOZORDER | SWP_NOACTIVATE);
+     SetVisibility(m_visibilityMask);
+     GuessToolbarVisibility();
+@@ -1237,6 +1845,130 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
+     return S_OK;
+ }
+ 
++// ThereModernUI: "rects=x,y,w,h;x,y,w,h;..." = the parts of the window the page
++// is really using (window coordinates). The real OS window then shrinks to just
++// those parts, so clicks anywhere else land in the game, while the client keeps
++// believing the window is its full constant size and never re-anchors it.
++// "rects=all" turns it off again, an empty list means nothing is in use.
++void FlashProxyModule::TmuiApplyShape(const WCHAR *query)
++{
++    CComBSTR bvalue = _wcsnicmp(query, L"rects=", 6) == 0 ? query + 6 : L"";
++    if (FAILED(UrlUnescapeInPlace(bvalue, 0)))
++        return;
++
++    if (_wcsicmp(bvalue, L"all") == 0)
++    {
++        m_tmuiShapeOn = false;
++        m_tmuiShapeCount = 0;
++        TmuiPlaceWindow();
++        return;
++    }
++
++    RECT box = {0, 0, 0, 0};
++    bool first = true;
++    m_tmuiShapeCount = 0;
++
++    WCHAR *text = bvalue;
++    while (text != nullptr && text[0] != 0)
++    {
++        LONG x = wcstol(text, &text, 10);
++        if (text[0] != ',')
++            break;
++        LONG y = wcstol(text + 1, &text, 10);
++        if (text[0] != ',')
++            break;
++        LONG w = wcstol(text + 1, &text, 10);
++        if (text[0] != ',')
++            break;
++        LONG h = wcstol(text + 1, &text, 10);
++
++        if (w > 0 && h > 0)
++        {
++            if (m_tmuiShapeCount < _countof(m_tmuiShapeRects))
++            {
++                RECT &r = m_tmuiShapeRects[m_tmuiShapeCount++];
++                r.left = x;
++                r.top = y;
++                r.right = x + w;
++                r.bottom = y + h;
++            }
++            if (first)
++            {
++                box.left = x;
++                box.top = y;
++                box.right = x + w;
++                box.bottom = y + h;
++                first = false;
++            }
++            else
++            {
++                box.left = min(box.left, x);
++                box.top = min(box.top, y);
++                box.right = max(box.right, x + w);
++                box.bottom = max(box.bottom, y + h);
++            }
++        }
++
++        if (text[0] != ';')
++            break;
++        ++text;
++    }
++
++    m_tmuiShapeOn = true;
++    m_tmuiShapeBox = box;
++    TmuiPlaceWindow();
++}
++
++// Put the real OS window where it belongs: normally the client's full rect, in
++// shape mode just the used part of it. The WebView's bounds get a negative
++// offset so the page doesn't notice the window moved underneath it.
++void FlashProxyModule::TmuiPlaceWindow()
++{
++    if (m_proxyWnd == nullptr)
++        return;
++
++    LONG pageW = max(1, m_size.cx);
++    LONG pageH = max(1, m_size.cy);
++    LONG x = m_pos.cx;
++    LONG y = m_pos.cy;
++    LONG w = pageW;
++    LONG h = pageH;
++
++    if (m_tmuiShapeOn)
++    {
++        RECT box = m_tmuiShapeBox;
++        box.left = max(0L, box.left);
++        box.top = max(0L, box.top);
++        box.right = min((LONG)pageW, box.right);
++        box.bottom = min((LONG)pageH, box.bottom);
++        if (box.right <= box.left || box.bottom <= box.top)
++        {
++            // nothing in use: keep a 1px sliver so the window still exists
++            box.left = 0;
++            box.top = 0;
++            box.right = 1;
++            box.bottom = 1;
++        }
++        x = m_pos.cx + box.left;
++        y = m_pos.cy + box.top;
++        w = box.right - box.left;
++        h = box.bottom - box.top;
++    }
++
++    SetWindowPos(m_proxyWnd, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
++
++    if (m_controller != nullptr)
++    {
++        RECT bounds;
++        bounds.left = -(x - m_pos.cx);
++        bounds.top = -(y - m_pos.cy);
++        bounds.right = bounds.left + pageW;
++        bounds.bottom = bounds.top + pageH;
++        m_controller->put_Bounds(bounds);
++        m_controller->NotifyParentWindowPositionChanged();
++    }
++}
++
+ HRESULT FlashProxyModule::SetMaskRects(WCHAR *text)
+ {
+     for (m_maskRectCount = 0; m_maskRectCount < _countof(m_maskRects) && text[0] != 0; ++m_maskRectCount)
 diff --git a/FlashProxy/FlashProxy.h b/FlashProxy/FlashProxy.h
-index b3a3f78..638f82d 100644
+index b3a3f78..21871dc 100644
 --- a/FlashProxy/FlashProxy.h
 +++ b/FlashProxy/FlashProxy.h
-@@ -227,6 +227,17 @@ protected:
+@@ -227,6 +227,21 @@ protected:
  public:
      static LRESULT APIENTRY ChildWndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
  
@@ -500,6 +823,10 @@ index b3a3f78..638f82d 100644
 +    HRESULT TmuiPostKeymode(const WCHAR *mode);
 +    HRESULT TmuiPostVariable(const WCHAR *name, const WCHAR *value);
 +    HRESULT TmuiPostKey(const WCHAR *key);
++    HRESULT TmuiPostChat(const WCHAR *value);
++    void TmuiApplyShape(const WCHAR *query);
++    void TmuiPlaceWindow();
++    static void TmuiRelayDeliver();
 +    static LRESULT CALLBACK TmuiKeymapProc(int code, WPARAM wParam, LPARAM lParam);
 +    static void TmuiSetKeymap(bool on);
 +    static void TmuiKeymapTick(bool active);
@@ -507,3 +834,131 @@ index b3a3f78..638f82d 100644
  protected:
      ULONG                                    m_refCount;
      QACONTAINER                              m_qaContainer;
+@@ -237,6 +252,11 @@ protected:
+     HWND                                     m_clientWnd;
+     RECT                                     m_maskRects[10];
+     LONG                                     m_maskRectCount;
++    // ThereModernUI: the parts of the window the page is using (tmuiShape)
++    bool                                     m_tmuiShapeOn;
++    RECT                                     m_tmuiShapeBox;
++    RECT                                     m_tmuiShapeRects[16];
++    LONG                                     m_tmuiShapeCount;
+     WCHAR                                    m_encodeBuffer[10000];
+     Identity                                 m_identity;
+     UINT32                                   m_visibilityMask;
+diff --git a/FlashProxy/FlashRequestProxy.cpp b/FlashProxy/FlashRequestProxy.cpp
+index 38963bc..76d4961 100644
+--- a/FlashProxy/FlashRequestProxy.cpp
++++ b/FlashProxy/FlashRequestProxy.cpp
+@@ -18,7 +18,7 @@
+ #include "WebView2.h"
+ #include "FlashRequestProxy.h"
+ 
+-FlashRequestProxy::FlashRequestProxy(ICoreWebView2Environment *environment, ICoreWebView2WebResourceRequestedEventArgs *args):
++FlashRequestProxy::FlashRequestProxy(ICoreWebView2Environment *environment, ICoreWebView2WebResourceRequestedEventArgs *args, void *owner):
+     m_refCount(1),
+     m_environment(environment),
+     m_args(args),
+@@ -28,12 +28,18 @@ FlashRequestProxy::FlashRequestProxy(ICoreWebView2Environment *environment, ICor
+     m_mimeType(),
+     m_contentType(),
+     m_size(0),
+-    m_position(0)
++    m_position(0),
++    m_owner(owner),
++    m_tee(false),
++    m_teeBacklog(false),
++    m_teeSent(false),
++    m_teeBuf()
+ {
+ }
+ 
+ FlashRequestProxy::~FlashRequestProxy()
+ {
++    TeeFlush();
+     if (m_deferral != nullptr)
+         m_deferral->Complete();
+ }
+@@ -45,6 +51,15 @@ HRESULT FlashRequestProxy::Init(IServiceProvider *serviceProvider, WCHAR *uri)
+ 
+     DetermineContentType(uri);
+ 
++    // ThereModernUI: another page (the Command Bar) reading the chat feed: keep a
++    // copy of the answer for the dock so it doesn't have to read the feed itself
++    if (wcsstr(uri, L"CommMessageData") != nullptr && TmuiRelayWanted(m_owner))
++    {
++        m_tee = true;
++        m_teeBacklog = wcsstr(uri, L"lastVer=") == nullptr;
++        TmuiRelayReaderSeen();
++    }
++
+     CComPtr<IBindHost> bindHost;
+     if (FAILED(serviceProvider->QueryService(IID_IBindHost, &bindHost)))
+         return E_FAIL;
+@@ -241,6 +256,13 @@ HRESULT STDMETHODCALLTYPE FlashRequestProxy::Read(void *pv, ULONG cb, ULONG *pcb
+ 
+         m_size -= *pcbRead;
+         m_position += *pcbRead;
++
++        if (m_tee && !m_teeSent)
++        {
++            m_teeBuf.Append(static_cast<const char *>(pv), static_cast<int>(*pcbRead));
++            if (*pcbRead == 0 || m_size == 0)
++                TeeFlush();
++        }
+     }
+ 
+     return hr;
+@@ -311,4 +333,14 @@ HRESULT FlashRequestProxy::DetermineContentType(const WCHAR *uri)
+ 
+     //Log(L"Content type unknown for .%s\n", ext);
+     return E_FAIL;
+-}
+\ No newline at end of file
++}
++
++// ThereModernUI: hand the copied chat feed answer over (once). Read can run off
++// the UI thread, so this only queues it; FlashProxy's UI timer delivers it.
++void FlashRequestProxy::TeeFlush()
++{
++    if (!m_tee || m_teeSent || m_teeBuf.GetLength() == 0)
++        return;
++    m_teeSent = true;
++    TmuiRelayQueue(m_teeBuf.GetString(), m_teeBuf.GetLength(), m_teeBacklog);
++}
+diff --git a/FlashProxy/FlashRequestProxy.h b/FlashProxy/FlashRequestProxy.h
+index 8d07804..66bb1a1 100644
+--- a/FlashProxy/FlashRequestProxy.h
++++ b/FlashProxy/FlashRequestProxy.h
+@@ -4,12 +4,17 @@ using namespace ATL;
+ 
+ void Log(const WCHAR *format, ...);
+ 
++// ThereModernUI: chat feed relay hooks, defined in FlashProxy.cpp
++bool TmuiRelayWanted(void *owner);
++void TmuiRelayQueue(const char *data, int len, bool backlog);
++void TmuiRelayReaderSeen();
++
+ class FlashRequestProxy: public IBindCtx,
+                          public IBindStatusCallback,
+                          public IStream
+ {
+ public:
+-    FlashRequestProxy(ICoreWebView2Environment *environment, ICoreWebView2WebResourceRequestedEventArgs *args);
++    FlashRequestProxy(ICoreWebView2Environment *environment, ICoreWebView2WebResourceRequestedEventArgs *args, void *owner = nullptr);
+     virtual ~FlashRequestProxy();
+ 
+     HRESULT Init(IServiceProvider *serviceProvider, WCHAR *uri);
+@@ -62,4 +67,11 @@ protected:
+     CComBSTR                                             m_contentType;
+     ULONG                                                m_size;
+     ULONG                                                m_position;
++    // ThereModernUI: copy of a chat feed answer for the dock (see FlashProxy.cpp)
++    void                                                *m_owner;
++    bool                                                 m_tee;
++    bool                                                 m_teeBacklog;
++    bool                                                 m_teeSent;
++    CStringA                                             m_teeBuf;
++    void TeeFlush();
+ };
+\ No newline at end of file

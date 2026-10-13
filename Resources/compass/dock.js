@@ -45,26 +45,31 @@ There.init({
 
   // dock buttons the user can toggle in Settings > Dock buttons.
   // settings/about minis always show so you can't hide your way out
+  // group = which dock section the button lives in; reordering stays inside it.
+  // main: the big buttons. view: camera controls. tools: the minis next to
+  // Library / Settings / About
   DOCK_BUTTONS: [
-    { id: 'friends', name: 'Friends' },
-    { id: 'inventory', name: 'Items' },
-    { id: 'wardrobe', name: 'Wardrobe' },
-    { id: 'shop', name: 'Shop' },
-    { id: 'auctions', name: 'Auctions' },
-    { id: 'places', name: 'Places' },
-    { id: 'events', name: 'Events' },
-    { id: 'review', name: 'Review Something' },
-    { id: 'emotes', name: 'Emotes' },
-    { id: 'gifs', name: 'GIFs' },
-    { id: 'scenes', name: 'Scenes' },
-    { id: 'developer', name: 'Developer' },
-    { id: 'music', name: 'Music' },
-    { id: 'quickbar', name: 'Quick Bar' },
-    { id: 'actionmode', name: 'Action Mode' },
-    { id: 'viewstd', name: 'Standard View' },
-    { id: 'viewface', name: 'Face Mirror' },
-    { id: 'viewbody', name: 'Body Mirror' },
+    { id: 'friends', name: 'Friends', group: 'main' },
+    { id: 'inventory', name: 'Items', group: 'main' },
+    { id: 'wardrobe', name: 'Wardrobe', group: 'main' },
+    { id: 'shop', name: 'Shop', group: 'main' },
+    { id: 'auctions', name: 'Auctions', group: 'main' },
+    { id: 'places', name: 'Places', group: 'main' },
+    { id: 'events', name: 'Events', group: 'main' },
+    { id: 'review', name: 'Review Something', group: 'main' },
+    { id: 'emotes', name: 'Emotes', group: 'main' },
+    { id: 'gifs', name: 'GIFs', group: 'main' },
+    { id: 'scenes', name: 'Scenes', group: 'main' },
+    { id: 'developer', name: 'Developer', group: 'main' },
+    { id: 'viewstd', name: 'Standard View', group: 'view' },
+    { id: 'viewface', name: 'Face Mirror', group: 'view' },
+    { id: 'viewbody', name: 'Body Mirror', group: 'view' },
+    { id: 'actionmode', name: 'Action Mode', group: 'tools' },
+    { id: 'music', name: 'Music', group: 'tools' },
+    { id: 'quickbar', name: 'Quick Bar', group: 'tools' },
   ],
+
+  DOCK_GROUPS: { main: 'Main buttons', view: 'Camera views', tools: 'Tools' },
 
   // hidden on a fresh dock (still in the Library)
   DOCK_DEFAULT_OFF: ['review', 'developer', 'scenes'],
@@ -88,6 +93,14 @@ There.init({
     { name: 'Red', accent: '#f87171', bright: '#fecaca' },
     { name: 'Teal', accent: '#2dd4bf', bright: '#99f6e4' },
     { name: 'Slate', accent: '#94a3b8', bright: '#e2e8f0' },
+    { name: 'Indigo', accent: '#818cf8', bright: '#c7d2fe' },
+    { name: 'Purple', accent: '#c084fc', bright: '#e9d5ff' },
+    { name: 'Cyan', accent: '#22d3ee', bright: '#a5f3fc' },
+    { name: 'Lime', accent: '#a3e635', bright: '#d9f99d' },
+    { name: 'Orange', accent: '#fb923c', bright: '#fed7aa' },
+    { name: 'Gold', accent: '#eab308', bright: '#fde047' },
+    { name: 'Rose', accent: '#fb7185', bright: '#fecdd3' },
+    { name: 'Ice', accent: '#cbd5e1', bright: '#f1f5f9' },
   ],
 
   onReady: function() {
@@ -104,11 +117,22 @@ There.init({
       depth: 32,
     });
 
+    // every request gets a timeout unless it sets its own. There.fetch has none, and
+    // the client sometimes never answers one, which used to stall whatever was
+    // waiting on it for good (live sync, the chat feed...)
+    $.ajaxSetup({ timeout: 20000 });
+
     // refit the native window whenever content changes so world clicks pass through
     new ResizeObserver(function() {
       There.syncWindowSize();
       There.syncPanelWidth();
     }).observe($('.dockroot')[0]);
+
+    // the dock hugs the window bottom, so when the native window resizes every
+    // rect moves even though the content didn't: recompute the shape
+    $(window).on('resize', function() {
+      There.syncWindowShape();
+    });
 
     // cache compass nodes, heading updates come in fast
     There.data.needleEl = $('.dock .compass .rose .needle')[0];
@@ -129,6 +153,46 @@ There.init({
     // F1-F12 in game: the patched FlashProxy forwards hotkeys here while the game
     // has focus. Stock FlashProxy just ignores this
     There.fsCommand('tmuiHotkeys');
+
+    // Window shaping: with our FlashProxy, clicks outside the dock's real parts
+    // fall through to the world, so the native window can keep ONE constant size.
+    // That's the fix for the dock wandering up when a panel closes: the client
+    // re-anchors a resized window by its top-left corner and clamps it back on
+    // screen, so every resize could move it. The ack (tmui_shape) switches it on.
+    try {
+      const saved = JSON.parse(localStorage.getItem(There.shapeWinKey) || 'null');
+      if (saved && saved.ok) {
+        // shaping worked before: go to the constant size right away so the dock
+        // sits at its final spot from the first frame
+        There.data.windowW = saved.w || 0;
+        There.fsCommand('setWidthHeight', {
+          width: Math.max(1, There.data.windowW || 1),
+          height: There.shapeWindowHeight(),
+        });
+      }
+    } catch (error) {
+    }
+    // FlashProxy can only answer once the page is fully loaded on its side, which
+    // is after this runs, so knock a few times. Stock FlashProxy never answers
+    // and we drop back to tight sizing
+    There.data.shapeTries = 0;
+    const shapeProbe = function() {
+      if (There.data.shapeOn) {
+        return;
+      }
+      There.data.shapeTries += 1;
+      if (There.data.shapeTries > 8) {
+        try {
+          localStorage.removeItem(There.shapeWinKey);
+        } catch (error) {
+        }
+        There.syncWindowSize();
+        return;
+      }
+      There.fsCommand('tmuiShape', 'rects=all');
+      There.setNamedTimer('shape-probe', 1500, shapeProbe);
+    };
+    shapeProbe();
 
     // Probe the client bridge. FlashProxy intercepts 127.0.0.1:9999 in-process, so
     // this works even with the Cockpit's external port off. Once it answers,
@@ -256,6 +320,11 @@ There.init({
       $('.dockroot').attr('data-panel', '');
       There.clearItemMenu();
     }
+    // start the speedometer loop once; it reschedules itself forever after
+    if (up && !There.data.speedoRunning) {
+      There.data.speedoRunning = true;
+      There.setNamedTimer('speedo', 3000, There.speedoTick);
+    }
     // down -> up: kick off startup sync (inventory, action map, clothing preload)
     if (up && was === false) {
       There.playSound('menu item activate');
@@ -284,6 +353,28 @@ There.init({
       if (m && Number(m[1]) >= 1 && Number(m[1]) <= There.QUICK_SLOTS) {
         There.useQuickSlot(Number(m[1]) - 1);
       }
+      return;
+    }
+    if (name == 'tmui_shape') {
+      // FlashProxy understands window shaping: constant window size from now on
+      if (!There.data.shapeOn) {
+        There.data.shapeOn = true;
+        There.data.shapeSent = null;
+        There.saveShapeWin();
+        There.syncWindowSize();
+      }
+      return;
+    }
+    if (name == 'tmui_rmb') {
+      $('.speedo').attr('data-boost', value == '1' ? '1' : '0');
+      return;
+    }
+    if (name == 'tmui_chatreader') {
+      There.onChatReaderSeen();
+      return;
+    }
+    if (name == 'tmui_chatfeed') {
+      There.onChatRelay(value);
       return;
     }
     if (name == 'tmui_actionmode') {
@@ -351,6 +442,8 @@ There.init({
       // re-key My Things action map (reloads lazily from this avatar's saved copy)
       // and emote favs/routines, and stop any shadow
       There.data.myThingsMap = null;
+      There.data.itemPhotos = null;
+      There.data.builderNames = null;
       There.data.emoteFavs = null;
       There.data.routines = null;
       There.data.routineSel = null;
@@ -395,6 +488,374 @@ There.init({
         headingEl.textContent = `${There.compass.headings[idx]} ${rounded}°`;
       }
     }
+  },
+
+  /* ------- speedometer -------
+   * Speed: /thobs/<doid>/edprops/posOrDel/value (same source the old Flash GPS
+   * addon read) gives our live world position in centimeters, so speed is just
+   * distance over time. Seat detection: while in a vehicle or on a board, our
+   * own presence0/interactions sprouts a "Get out"/"Get off" method. Checked
+   * slowly; once seated, the position is sampled fast. The strip waits for real
+   * movement before appearing, so a parked ride stays quiet, and a 30s grace
+   * keeps it up at red lights. */
+
+  SPEEDO_IDLE_MS: 2500,
+  SPEEDO_FAST_MS: 400,
+  SPEEDO_MIN_KMH: 6,
+  // The client only trickles a ride's position out through ScriptHook, far slower
+  // than it really moves, so raw distance/time reads way low. Calibrated so a
+  // buggy at full throttle shows around 30 mph. Bump it if rides feel faster.
+  SPEEDO_CAL: 45,
+  // raw km/h below this is feed jitter while parked, show 0
+  SPEEDO_DEAD_KMH: 0.15,
+  // where the speed bar maxes out, in shown mph
+  SPEEDO_BAR_MPH: 50,
+  // tach face: 0..9 x1000 RPM, redline drawn from 7
+  SPEEDO_RPM_MAX: 9,
+
+  // "State ( x, y, z )", position in cm
+  parsePosOrDel: function(xml) {
+    try {
+      const raw = xml.getElementsByTagName('Value')[0]?.childNodes[0]?.nodeValue || '';
+      const m = raw.match(/\(([^)]+)\)/);
+      if (m) {
+        const pos = m[1].split(',').map(parseFloat);
+        if (pos.length == 3 && pos.every(n => !isNaN(n))) {
+          return pos;
+        }
+      }
+    } catch (error) {
+    }
+    return null;
+  },
+
+  // slow loop: are we in/on something we could drive?
+  speedoTick: function() {
+    const doid = There.data.pilotDoid;
+    // stay quiet while the dock is busy or the bridge is down
+    if (!doid || !There.data.cockpitUp || !There.prefs().speedo ||
+        There.data.sweep || There.data.mapWaiters || There.data.loadingAcc) {
+      There.speedoNote(!doid ? 'no doid' : !There.data.cockpitUp ? 'bridge down' : !There.prefs().speedo ? 'disabled' : 'dock busy');
+      There.setSpeedo(false);
+      There.setNamedTimer('speedo', 5000, There.speedoTick);
+      return;
+    }
+    There.menuKids(`/thobs/${doid}/presence0/interactions`, function(names) {
+      const seated = (names || []).some(n => /^get (out|off)\b/i.test(n));
+      There.speedoNote(names == null ? 'read failed' : (seated ? 'seated' : `on foot (${(names || []).join('/') || 'none'})`));
+      if (!seated) {
+        There.setSpeedo(false);
+        There.data.speedoPrev = null;
+        There.data.speedoEma = 0;
+        There.data.speedoVeh = null;
+        There.setNamedTimer('speedo', There.SPEEDO_IDLE_MS, There.speedoTick);
+        return;
+      }
+      // our own position freezes while seated, the VEHICLE's thob is what moves.
+      // on mount, find it: it's the object right under us
+      There.setSpeedo(true);
+      if (!There.data.speedoVeh) {
+        There.speedoFindVehicle(function(veh) {
+          There.data.speedoVeh = veh;
+          There.speedoNote(veh ? `tracking ${veh}` : 'seat found, vehicle not');
+          There.data.speedoChecks = 0;
+          There.speedoSample();
+        });
+        return;
+      }
+      There.data.speedoChecks = 0;
+      There.speedoSample();
+    });
+  },
+
+  // the thob nearest our seat spot (we just sat down ON it). one paced pass
+  // over the area's objects, only ever runs once per mount
+  speedoFindVehicle: function(cb) {
+    const doid = There.data.pilotDoid;
+    There.fetch({
+      path: '/ScriptHook/Get',
+      query: { Path: `/thobs/${doid}/edprops/posOrDel/value` },
+      dataType: 'xml',
+      success: function(xml) {
+        const mePos = There.parsePosOrDel(xml);
+        if (!mePos) {
+          cb(null);
+          return;
+        }
+        There.menuKids('/thobs', function(ids) {
+          ids = (ids || []).filter(id => /^\d+$/.test(id) && id != String(doid));
+          let best = null;
+          let bestDist = 1500; // within 15m of the seat or it isn't our ride
+          const step = function(i) {
+            if (i >= ids.length) {
+              cb(best);
+              return;
+            }
+            There.fetch({
+              path: '/ScriptHook/Get',
+              query: { Path: `/thobs/${ids[i]}/edprops/posOrDel/value` },
+              dataType: 'xml',
+              success: function(xml2) {
+                const p = There.parsePosOrDel(xml2);
+                if (p) {
+                  const d = Math.sqrt(
+                    (p[0] - mePos[0]) ** 2 + (p[1] - mePos[1]) ** 2 + (p[2] - mePos[2]) ** 2);
+                  if (d < bestDist) {
+                    bestDist = d;
+                    best = ids[i];
+                  }
+                }
+              },
+              complete: function() {
+                // pace it, the embedded server is single threaded
+                There.setNamedTimer('speedo-find', 40, function() {
+                  step(i + 1);
+                });
+              },
+            });
+          };
+          step(0);
+        });
+      },
+      error: function() {
+        cb(null);
+      },
+    });
+  },
+
+  // fast loop while seated: sample the vehicle's position, show the speed
+  speedoSample: function() {
+    const doid = There.data.pilotDoid;
+    if (!doid || !There.data.cockpitUp || !There.prefs().speedo) {
+      There.setSpeedo(false);
+      There.setNamedTimer('speedo', 5000, There.speedoTick);
+      return;
+    }
+    There.fetch({
+      path: '/ScriptHook/Get',
+      query: { Path: `/thobs/${There.data.speedoVeh || doid}/edprops/posOrDel/value` },
+      dataType: 'xml',
+      success: function(xml) {
+        There.speedoMeasure(There.parsePosOrDel(xml));
+        // every few samples make sure we're still seated
+        There.data.speedoChecks = (There.data.speedoChecks || 0) + 1;
+        const recheck = There.data.speedoChecks % 6 == 0;
+        There.setNamedTimer('speedo', There.SPEEDO_FAST_MS, recheck ? There.speedoTick : There.speedoSample);
+      },
+      error: function() {
+        // the vehicle thob can vanish (put away while seated): fall back
+        There.data.speedoVeh = null;
+        There.setSpeedo(false);
+        There.setNamedTimer('speedo', 6000, There.speedoTick);
+      },
+    });
+  },
+
+  speedoMeasure: function(pos) {
+    const now = Date.now();
+    const prev = There.data.speedoPrev;
+    let kmh = 0;
+    if (pos && prev && now - prev.t > 200) {
+      const dt = (now - prev.t) / 1000;
+      const d = Math.sqrt(
+        (pos[0] - prev.p[0]) ** 2 + (pos[1] - prev.p[1]) ** 2 + (pos[2] - prev.p[2]) ** 2);
+      kmh = d / dt * 0.036;
+      // a teleport looks like warp speed, swallow it
+      if (kmh > 700) {
+        kmh = 0;
+        There.data.speedoEma = 0;
+      }
+    }
+    if (pos) {
+      There.data.speedoPrev = { p: pos, t: now };
+    }
+    // quick on the throttle, settles smoothly when coasting
+    There.data.speedoEma = (There.data.speedoEma || 0) * 0.35 + kmh * 0.65;
+    // seated = shown, even at 0. the seat check is the only gate
+    There.setSpeedo(true);
+    const shown = There.data.speedoEma < There.SPEEDO_DEAD_KMH ? 0 : There.data.speedoEma * There.SPEEDO_CAL;
+    There.showSpeedo(shown);
+  },
+
+  setSpeedo: function(on) {
+    if (on && $('.speedo').attr('data-active') != '1') {
+      // show first so the position code can measure it
+      $('.speedo').attr('data-active', '1');
+      There.applySpeedoPos();
+      return;
+    }
+    $('.speedo').attr('data-active', on ? '1' : '0');
+  },
+
+  // the gauge is draggable; its spot is kept as right/bottom offsets so it
+  // stays put relative to the screen corner across sessions
+  applySpeedoPos: function() {
+    try {
+      const pos = JSON.parse(localStorage.getItem('dock.speedopos') || 'null');
+      if (pos && pos.r >= 0 && pos.b >= 0) {
+        $('.speedo').css({ right: `${pos.r}px`, bottom: `${pos.b}px` });
+        return;
+      }
+    } catch (error) {
+    }
+    // no saved spot yet: sit centered over the dock where a new player sees it
+    const el = $('.speedo')[0];
+    if (el) {
+      const w = el.getBoundingClientRect().width || 240;
+      $('.speedo').css('right', `${Math.max(2, Math.round((window.innerWidth - w) / 2))}px`);
+    }
+  },
+
+  saveSpeedoPos: function() {
+    const el = $('.speedo')[0];
+    if (!el) {
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    try {
+      localStorage.setItem('dock.speedopos', JSON.stringify({
+        r: Math.round(window.innerWidth - r.right),
+        b: Math.round(window.innerHeight - r.bottom),
+      }));
+    } catch (error) {
+    }
+  },
+
+  // debug note while we chase the seat signal, shows in Settings next to the
+  // sync status. cheap: only writes when the text changes
+  speedoNote: function(text) {
+    if (There.data.speedoNote !== text) {
+      There.data.speedoNote = text;
+      There.updateSyncStatus();
+    }
+  },
+
+  // tick marks + numbers around the 240 degree tach dial (0-9, x1000 RPM),
+  // drawn once. actual speed shows digitally in the middle
+  buildSpeedoDial: function() {
+    const NS = 'http://www.w3.org/2000/svg';
+    const ticks = $('.speedo .sgticks')[0];
+    const labels = $('.speedo .sglabels')[0];
+    if (!ticks || !labels || ticks.childNodes.length) {
+      return;
+    }
+    const max = There.SPEEDO_RPM_MAX;
+    for (let v = 0; v <= max * 2; v++) {
+      const major = v % 2 == 0;
+      const deg = (210 - 240 * (v / (max * 2))) * Math.PI / 180;
+      const cos = Math.cos(deg);
+      const sin = Math.sin(deg);
+      const line = document.createElementNS(NS, 'line');
+      const r1 = major ? 70 : 73;
+      line.setAttribute('x1', 100 + r1 * cos);
+      line.setAttribute('y1', 104 - r1 * sin);
+      line.setAttribute('x2', 100 + 78 * cos);
+      line.setAttribute('y2', 104 - 78 * sin);
+      if (!major) {
+        line.setAttribute('data-minor', '1');
+      }
+      ticks.appendChild(line);
+      if (major) {
+        const text = document.createElementNS(NS, 'text');
+        text.setAttribute('x', 100 + 56 * cos);
+        text.setAttribute('y', 104 - 56 * sin + 5);
+        text.textContent = v / 2;
+        labels.appendChild(text);
+      }
+    }
+    const legend = document.createElementNS(NS, 'text');
+    legend.setAttribute('class', 'sglegend');
+    legend.setAttribute('x', 100);
+    legend.setAttribute('y', 76);
+    legend.textContent = 'x1000 RPM';
+    labels.appendChild(legend);
+  },
+
+  // new target for the gauge; a little lerp loop glides everything there so the
+  // needle and arc never jump in steps between samples
+  showSpeedo: function(kmh) {
+    There.buildSpeedoDial();
+    There.data.speedoTarget = kmh;
+    if (!There.data.speedoAnimOn) {
+      There.data.speedoAnimOn = true;
+      requestAnimationFrame(There.speedoAnim);
+    }
+  },
+
+  // pretend engine: each gear climbs from ~2.2k to ~6.8k across its speed band,
+  // so accelerating sweeps the needle up and "shifts" drop it like a real box.
+  // idle sits just under 1k, boost leans it toward the redline
+  SPEEDO_GEARS: [[0, 8], [8, 16], [16, 26], [26, 38], [38, 50]],
+
+  // which gear the pretend box is in for a given speed ('N' at a stop)
+  speedoGear: function(mph) {
+    if (mph < 0.4) {
+      return 'N';
+    }
+    for (let i = 0; i < There.SPEEDO_GEARS.length; i++) {
+      if (mph < There.SPEEDO_GEARS[i][1]) {
+        return i + 1;
+      }
+    }
+    return There.SPEEDO_GEARS.length;
+  },
+
+  speedoRpm: function(mph, boost) {
+    if (mph < 0.4) {
+      return 0.85 + (boost || 0) * 0.6;
+    }
+    let lo = 0;
+    let hi = 8;
+    for (const g of There.SPEEDO_GEARS) {
+      lo = g[0];
+      hi = g[1];
+      if (mph < g[1]) {
+        break;
+      }
+    }
+    const f = Math.min(1, (mph - lo) / (hi - lo));
+    const first = lo == 0;
+    let rpm = (first ? 1.1 : 2.2) + f * (6.8 - (first ? 1.1 : 2.2));
+    rpm += (boost || 0) * 1.1;
+    return Math.min(rpm, 8.6);
+  },
+
+  speedoAnim: function() {
+    if ($('.speedo').attr('data-active') != '1') {
+      There.data.speedoAnimOn = false;
+      There.data.speedoShown = 0;
+      return;
+    }
+    const target = There.data.speedoTarget || 0;
+    let shown = There.data.speedoShown || 0;
+    shown += (target - shown) * 0.08;
+    if (Math.abs(target - shown) < 0.05) {
+      shown = target;
+    }
+    There.data.speedoShown = shown;
+    const mph = shown * 0.621;
+    // boost eases in and out rather than stepping
+    const boostOn = $('.speedo').attr('data-boost') == '1' ? 1 : 0;
+    There.data.speedoBoost = (There.data.speedoBoost || 0) + (boostOn - (There.data.speedoBoost || 0)) * 0.06;
+    // the rev needle gets its own lerp so gear shifts sweep instead of jumping
+    const rpmTarget = There.speedoRpm(mph, There.data.speedoBoost);
+    let rpm = There.data.speedoRpmShown;
+    rpm = rpm == undefined ? rpmTarget : rpm + (rpmTarget - rpm) * 0.055;
+    There.data.speedoRpmShown = rpm;
+    const frac = Math.min(1, rpm / There.SPEEDO_RPM_MAX);
+    $('.speedo .sgneedle').css('transform', `rotate(${-30 + 240 * frac}deg)`);
+    $('.speedo .sgfill').css('stroke-dashoffset', 360.2 * (1 - frac));
+    const rounded = Math.round(mph);
+    if (rounded !== There.data.speedoDigits) {
+      There.data.speedoDigits = rounded;
+      $('.speedo .spdval').text(rounded);
+    }
+    const gear = There.speedoGear(mph);
+    if (gear !== There.data.speedoGearShown) {
+      There.data.speedoGearShown = gear;
+      $('.speedo .spdgear').text(gear);
+    }
+    requestAnimationFrame(There.speedoAnim);
   },
 
   // panels match the dock's width: measure the pill, publish it as --panel-w
@@ -775,7 +1236,7 @@ There.init({
       There.data.chatPollOn = true;
       There.data.shadowVer = undefined;
       There.data.chatSeen = null;
-      There.shadowPoll();
+      There.setNamedTimer('shadow-poll', 8000, There.shadowPoll);
     } else if (!need && There.data.chatPollOn) {
       There.data.chatPollOn = false;
       There.clearNamedTimer('shadow-poll');
@@ -785,64 +1246,124 @@ There.init({
   // Poll the local chat feed (version-gated, only NEW lines come back) and hand
   // lines to Shadow (replay emote tokens) and Party sync (play other TMUI users'
   // tracks). Same trick There Edge's shortcut bar uses for its puppeteer.
-  // Read the chat feed with quick requests only. Asking without lastVer makes the
-  // client answer straight away with its current chat buffer; we work out the new
-  // lines ourselves. Don't go back to long polls (lastVer): an abandoned long poll
-  // stays open inside the client's single threaded server, they pile up, and other
-  // windows' feeds (the Command Bar's /commands) stop getting answers.
-  CHAT_POLL_MS: 2000,
+  // Read the chat feed the way the client expects: ONE request open at a time,
+  // passing lastVer, and the client answers when new chat arrives (which can be
+  // minutes when it's quiet). Never time it out or abandon it: the client keeps an
+  // abandoned request open, they pile up, and other windows' feeds (the Command
+  // Bar's /commands typed in chat) stop being answered. Only re-ask after an answer.
+  CHAT_POLL_MS: 1000,
 
   shadowPoll: function() {
-    if (!There.data.chatPollOn) {
+    if (!There.data.chatPollOn || There.data.chatPolling) {
+      return;
+    }
+    // another page (the Command Bar) reads the feed and FlashProxy hands us a copy:
+    // don't read it too, two readers split the lines between them. If the copies
+    // stop for 15 minutes (that page closed), go back to reading it ourselves
+    if (There.data.chatRelayAt && Date.now() - There.data.chatRelayAt < 15 * 60 * 1000) {
+      There.setNamedTimer('shadow-poll', 60000, There.shadowPoll);
       return;
     }
     if (!There.data.cockpitUp) {
       There.setNamedTimer('shadow-poll', 2000, There.shadowPoll);
       return;
     }
+    const query = { Oid: 1, request: Math.random() };
+    if (There.data.shadowVer != undefined) {
+      query.lastVer = There.data.shadowVer;
+    }
     const host = There.data.host || There.variables.there_resourceshost || '127.0.0.1:9999';
-    $.ajax({
+    There.data.chatPolling = true;
+    let failed = false;
+    There.data.chatXhr = $.ajax({
       url: `http://${host}/VersionedXmlSvc/CommMessageData`,
-      data: { Oid: 1, request: Math.random() },
+      data: query,
       dataType: 'xml',
-      timeout: 15000,
+      timeout: 0, // no timeout on purpose, see above
       success: function(xml) {
-        try {
-          const ver = xml.getElementsByTagName('version')[0]?.childNodes[0]?.nodeValue;
-          if (ver != undefined && ver === There.data.shadowVer) {
-            return; // nothing new
-          }
-          There.data.shadowVer = ver;
-          const lines = [];
-          for (const xmlMsg of xml.getElementsByTagName('msg')) {
-            const author = xmlMsg.getElementsByTagName('authorName')[0]?.childNodes[0]?.nodeValue || '';
-            let text = '';
-            const xmlText = xmlMsg.getElementsByTagName('text')[0];
-            if (xmlText) {
-              for (const child of xmlText.childNodes) {
-                if (child.tagName == undefined) {
-                  text += child.nodeValue;
-                }
-              }
-            }
-            lines.push({ author: author, text: text, key: author + '\u0001' + text });
-          }
-          const prev = There.data.chatSeen;
-          There.data.chatSeen = lines.map(l => l.key);
-          // first read is the backlog, only live lines count
-          if (!prev) {
-            return;
-          }
-          for (const line of There.newChatLines(prev, lines)) {
-            There.onChatLine(line.author, line.text);
-          }
-        } catch (error) {
-        }
+        There.handleChatXml(xml, There.data.shadowVer == undefined);
+      },
+      error: function() {
+        failed = true;
       },
       complete: function() {
-        There.setNamedTimer('shadow-poll', There.CHAT_POLL_MS, There.shadowPoll);
+        There.data.chatPolling = false;
+        // straight back in after an answer; back off a little after an error
+        There.setNamedTimer('shadow-poll', failed ? 5000 : There.CHAT_POLL_MS, There.shadowPoll);
       },
     });
+  },
+
+  // A chat feed answer (our own, or the Command Bar's copy from FlashProxy).
+  // backlog = what was already there when the reader started: remember it,
+  // don't act on it.
+  handleChatXml: function(xml, backlog) {
+    try {
+      const ver = xml.getElementsByTagName('version')[0]?.childNodes[0]?.nodeValue;
+      if (ver != undefined) {
+        There.data.shadowVer = ver;
+      }
+      const lines = [];
+      for (const xmlMsg of xml.getElementsByTagName('msg')) {
+        const author = xmlMsg.getElementsByTagName('authorName')[0]?.childNodes[0]?.nodeValue || '';
+        let text = '';
+        const xmlText = xmlMsg.getElementsByTagName('text')[0];
+        if (xmlText) {
+          for (const child of xmlText.childNodes) {
+            if (child.tagName == undefined) {
+              text += child.nodeValue;
+            }
+          }
+        }
+        lines.push({ author: author, text: text, key: author + '\u0001' + text });
+      }
+      if (backlog) {
+        There.data.chatSeen = lines.map(l => l.key).slice(-50);
+        return;
+      }
+      // lastVer answers only carry new lines, but be safe if a whole buffer comes back
+      const prev = There.data.chatSeen || [];
+      const fresh = lines.length > 1 && prev.length ? There.newChatLines(prev, lines) : lines;
+      There.data.chatSeen = prev.concat(fresh.map(l => l.key)).slice(-50);
+      for (const line of fresh) {
+        There.onChatLine(line.author, line.text);
+      }
+    } catch (error) {
+    }
+  },
+
+  // FlashProxy saw another page (the Command Bar) ask the chat feed. From now on
+  // we take its copies instead of reading the feed ourselves. If we already had
+  // a read open, end it once (it can't be helped, it may take one line with it).
+  onChatReaderSeen: function() {
+    const first = !There.data.chatRelayAt;
+    There.data.chatRelayAt = Date.now();
+    if (first && There.data.chatXhr && There.data.chatPolling) {
+      try {
+        There.data.chatXhr.abort();
+      } catch (error) {
+      }
+    }
+  },
+
+  // "tmui_chatfeed" from FlashProxy: "<0 backlog | 1 new>|<xml>"
+  onChatRelay: function(value) {
+    const v = String(value || '');
+    const bar = v.indexOf('|');
+    if (bar < 0) {
+      return;
+    }
+    let xml;
+    try {
+      xml = $.parseXML(v.slice(bar + 1));
+    } catch (error) {
+      return;
+    }
+    There.onChatReaderSeen();
+    if (!There.prefs().gifs && !There.prefs().party && !There.data.shadowOn) {
+      return;
+    }
+    There.handleChatXml(xml, v.slice(0, bar) === '0');
   },
 
   // The buffer slides: old lines drop off the front, new ones land at the end.
@@ -864,8 +1385,8 @@ There.init({
         }
       }
     }
-    // none of what we saw is left, so it's all new
-    return prevKeys.length ? lines : [];
+    // none of what we saw is in this reply, so it's all new
+    return lines;
   },
 
   onChatLine: function(author, text) {
@@ -1361,7 +1882,7 @@ There.init({
           $(sa).empty();
           $('<option value=""></option>').text('Action…').appendTo($(sa));
           const labels = it ? (it.menuActions && it.menuActions.length ? it.menuActions
-            : (it.interactions || '').split(',').map(p => (p.split(':')[1] || '').trim()).filter(Boolean)) : [];
+            : There.knownActions(it) || (it.interactions || '').split(',').map(p => (p.split(':')[1] || '').trim()).filter(Boolean)) : [];
           for (const l of labels) {
             $('<option></option>').attr('value', l).text(l).appendTo($(sa));
           }
@@ -1631,10 +2152,94 @@ There.init({
       return;
     }
     const rect = el.getBoundingClientRect();
+    if (There.data.shapeOn) {
+      // Constant-size mode (our FlashProxy shapes mouse input instead): resizing
+      // is what made the dock wander, so keep one size and only ever grow it.
+      // The dock hugs the window's bottom edge, so with the size pinned the pill
+      // stays exactly where the player dragged it, panels or not.
+      const w = Math.max(There.data.windowW || 0, Math.ceil(rect.width));
+      if (w != There.data.windowW) {
+        There.data.windowW = w;
+        There.saveShapeWin();
+      }
+      There.fsCommand('setWidthHeight', {
+        width: Math.max(1, w),
+        height: Math.max(There.shapeWindowHeight(), Math.ceil(rect.height)),
+      });
+      There.syncWindowShape();
+      return;
+    }
     There.fsCommand('setWidthHeight', {
       width: Math.max(1, Math.ceil(rect.width)),
       height: Math.max(1, Math.ceil(rect.height)),
     });
+  },
+
+  /* ------- constant window + input shaping -------
+   * The client re-anchors a resized HUD window by its top-left corner and clamps
+   * it back on screen, so the old resize-to-fit made the pill drift up whenever a
+   * panel closed. With our FlashProxy the window keeps one size and tmuiShape
+   * tells it which rects are really ours; everything else passes clicks to the
+   * world, so the big window costs nothing. */
+
+  shapeWinKey: 'dock.shapewin',
+
+  saveShapeWin: function() {
+    try {
+      localStorage.setItem(There.shapeWinKey, JSON.stringify({
+        ok: 1,
+        w: There.data.windowW || 0,
+      }));
+    } catch (error) {
+    }
+  },
+
+  // tall enough for the biggest stack (panel + action bar + quick bar + dock),
+  // capped to the game window so small clients don't fight the clamp
+  shapeWindowHeight: function() {
+    let h = 820;
+    const client = parseInt(There.variables.there_windowheight || '0', 10) || 0;
+    if (client > 200) {
+      h = Math.min(h, client - 20);
+    }
+    return h;
+  },
+
+  // the parts of the window that are really ours, padded a little so the drop
+  // shadows stay inside and the pill edge is still grabbable. closed panels and
+  // bars collapse to zero height, so they filter themselves out
+  syncWindowShape: function() {
+    if (!There.data.shapeOn) {
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const pad = 8;
+    const rects = [];
+    const take = function(el) {
+      if (!el) {
+        return;
+      }
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) {
+        return;
+      }
+      rects.push([
+        Math.max(0, Math.floor((r.left - pad) * dpr)),
+        Math.max(0, Math.floor((r.top - pad) * dpr)),
+        Math.ceil((r.width + 2 * pad) * dpr),
+        Math.ceil((r.height + 2 * pad) * dpr),
+      ].join(','));
+    };
+    $('.dockroot').children().each(function() {
+      take(this);
+    });
+    take($('.tmtip[data-active="1"]')[0]);
+    const value = rects.join(';');
+    if (value === There.data.shapeSent) {
+      return;
+    }
+    There.data.shapeSent = value;
+    There.fsCommand('tmuiShape', `rects=${value}`);
   },
 
   // GUI command via the client's local command service. There.guiCommand
@@ -1996,10 +2601,7 @@ There.init({
     }
     if (s.index >= s.poids.length) {
       CatalogImages.savePoids();
-      There.endCacheSweep(`Done, ${s.ok} photos`);
-      if (There.data.panel == 'wardrobe') {
-        There.renderFolderView();
-      }
+      There.itemPhotoSweep(s);
       return;
     }
     const poid = s.poids[s.index];
@@ -2024,7 +2626,7 @@ There.init({
       complete: function() {
         // give BrowserProxy time to load the page and run coupling.js
         There.setNamedTimer('sweep-read', There.sweepDelay, function() {
-          There.readAboutTitle(poid, function(info) {
+          There.waitAboutTitle(poid, function(info) {
             if (info && info.image) {
               CatalogImages.poids[poid] = info.image;
               s.ok = (s.ok || 0) + 1;
@@ -2039,8 +2641,97 @@ There.init({
 
   sweepDelay: 700,
 
+  // After the clothing: inventory items with no photo (builder items, and any the
+  // catalog list doesn't know). They have no About method of their own, so the
+  // About page opens through the My Things menu. Needs the action map, built
+  // once if any of them is missing from it.
+  itemPhotoSweep: function(s) {
+    const todo = (There.data.inventory || []).filter(i => There.itemNeedsPhoto(i));
+    const done = function() {
+      There.endCacheSweep(`Done, ${s.ok || 0} photos`);
+      if (There.data.panel == 'wardrobe' || There.data.panel == 'inventory') {
+        There.renderFolderView();
+      }
+    };
+    if (!todo.length) {
+      done();
+      return;
+    }
+    const map = There.data.myThingsMap || There.loadMyThingsMap() || {};
+    const go = function() {
+      s.builder = todo;
+      s.bIndex = 0;
+      There.itemPhotoStep(s, done);
+    };
+    if (todo.some(i => !map[i.name])) {
+      There.setCacheText('Finding items…');
+      There.buildMyThingsMap(go);
+    } else {
+      There.data.myThingsMap = map;
+      go();
+    }
+  },
+
+  itemPhotoStep: function(s, done) {
+    if (s.cancelled) {
+      There.endCacheSweep('Cancelled');
+      return;
+    }
+    if (s.paused) {
+      s.resumeBuilder = function() { There.itemPhotoStep(s, done); };
+      return;
+    }
+    if (s.bIndex >= s.builder.length) {
+      done();
+      return;
+    }
+    const it = s.builder[s.bIndex];
+    $('.cachebar .pfill').css('width', Math.round((s.bIndex / s.builder.length) * 100) + '%');
+    There.setCacheText(`Items ${s.bIndex + 1}/${s.builder.length}`);
+    const path = (There.data.myThingsMap || {})[it.name];
+    const next = function() {
+      s.bIndex++;
+      There.setNamedTimer('sweep-next', 80, function() { There.itemPhotoStep(s, done); });
+    };
+    if (!path) {
+      next();
+      return;
+    }
+    There.fetch({
+      path: '/ScriptHook/Invoke',
+      query: { Path: `${path}/About/activate` },
+      dataType: 'xml',
+      complete: function() {
+        There.setNamedTimer('sweep-read', There.sweepDelay, function() {
+          There.waitAboutTitle(it.doid, function(info) {
+            if (info && info.productId && info.image) {
+              There.saveItemPhoto(it.doid, info);
+              s.ok = (s.ok || 0) + 1;
+            }
+            next();
+          }, it.name);
+        });
+      },
+    });
+  },
+
+  // Bigger About pages take a while to load, so the title isn't ours yet when we
+  // first look. Keep checking (every 600ms, ~4s max) and stop as soon as it shows.
+  waitAboutTitle: function(poid, done, name, tries) {
+    tries = tries || 0;
+    There.readAboutTitle(poid, function(info) {
+      if ((info && info.image) || tries >= 6 || (There.data.sweep && There.data.sweep.cancelled)) {
+        done(info);
+        return;
+      }
+      There.setNamedTimer('sweep-read', 600, function() {
+        There.waitAboutTitle(poid, done, name, tries + 1);
+      });
+    }, name);
+  },
+
   // find the About window and pull the ProductId out of our injected title
-  readAboutTitle: function(poid, done) {
+  readAboutTitle: function(poid, done, name) {
     There.fetch({
       path: '/ScriptHook/Get',
       query: { Path: '/client/windows' },
@@ -2056,7 +2747,7 @@ There.init({
           }
         } catch (error) {
         }
-        There.scanAboutWindows(windows, 0, poid, done);
+        There.scanAboutWindows(windows, 0, poid, done, name);
       },
       error: function() {
         done(null);
@@ -2064,7 +2755,7 @@ There.init({
     });
   },
 
-  scanAboutWindows: function(windows, i, poid, done) {
+  scanAboutWindows: function(windows, i, poid, done, name) {
     if (i >= windows.length) {
       done(null);
       return;
@@ -2077,14 +2768,14 @@ There.init({
         const t = xml.getElementsByTagName('Value')[0]?.childNodes[0]?.nodeValue || '';
         // TMUI<sep>productId<sep>poid<sep>image<sep>name
         const parts = t.split('│');
-        if (parts[0] === 'TMUI' && (parts[2] === '' || parts[2] === String(poid))) {
+        if (parts[0] === 'TMUI' && (parts[2] === '' || parts[2] === String(poid) || (name && parts[4] === name))) {
           done({ productId: parts[1], poid: parts[2], image: parts[3], name: parts[4] });
           return;
         }
-        There.scanAboutWindows(windows, i + 1, poid, done);
+        There.scanAboutWindows(windows, i + 1, poid, done, name);
       },
       error: function() {
-        There.scanAboutWindows(windows, i + 1, poid, done);
+        There.scanAboutWindows(windows, i + 1, poid, done, name);
       },
     });
   },
@@ -2100,7 +2791,13 @@ There.init({
     if (There.data.sweep && There.data.sweep.paused) {
       There.data.sweep.paused = false;
       $('.cachebar').attr('data-state', 'running');
-      There.sweepStep();
+      if (There.data.sweep.resumeBuilder) {
+        const r = There.data.sweep.resumeBuilder;
+        There.data.sweep.resumeBuilder = null;
+        r();
+      } else {
+        There.sweepStep();
+      }
     }
   },
 
@@ -2115,7 +2812,15 @@ There.init({
     There.clearNamedTimer('sweep-timeout');
     There.clearNamedTimer('sweep-next');
     $('.cachebar .pfill').css('width', '100%');
+    delete There.data.sweep;
     There.setCacheText(msg);
+    There.refreshFooter();
+    There.setSyncNote(`Photos: ${msg}`);
+    There.setNamedTimer('photo-note', 4000, function() {
+      if (!There.data.sweep) {
+        There.setSyncNote('');
+      }
+    });
     $('.cachebar').attr('data-state', 'idle');
     try {
       $('.abouthost')[0].src = 'about:blank';
@@ -2126,6 +2831,9 @@ There.init({
 
   setCacheText: function(t) {
     $('.cachebar .ptext').text(t);
+    if (There.data.sweep) {
+      There.setSyncNote(`Caching photos… ${t}`);
+    }
   },
 
   // clear cached clothing photos: drop the in-memory images (grid goes back to
@@ -2136,8 +2844,15 @@ There.init({
       CatalogImages.savePoids();
     } catch (error) {
     }
+    // the About-harvested item photos too, so a clear really starts from zero
+    try {
+      There.data.itemPhotos = {};
+      localStorage.removeItem(There.itemPhotosKey());
+    } catch (error) {
+    }
     There.setCacheText('Cleared');
-    if (There.data.panel == 'wardrobe') {
+    There.refreshFooter();
+    if (There.data.panel == 'wardrobe' || There.data.panel == 'inventory') {
       There.renderFolderView();
     }
   },
@@ -3383,6 +4098,9 @@ There.init({
               done();
               return;
             }
+            if (!There.justUsed(item)) {
+              There.learnActions(item, names);
+            }
             // can be put away = it's out, so put it away. a held gun can list "Aim"
             // next to "Put Away", so put-away has to win
             const pick =
@@ -3408,6 +4126,9 @@ There.init({
                 }
               });
             }
+            // its state flips, so the actions we had for it are out of date
+            item.actedAt = Date.now();
+            item.menuActions = null;
             There.fetch({
               path: '/ScriptHook/Invoke',
               query: { Path: `${path}/${pick}/activate` },
@@ -3559,10 +4280,107 @@ There.init({
     // buttons. For wardrobe items the worn state is fetched in the background and
     // the bar rebuilt to flip Put On / Take Off, never wait on it to show.
     There.playSound('close menu');
+    // seen this kind of item before: use its remembered actions, no menu read
+    // (not right after using one of its actions, its table labels are behind)
+    if (item.interactions && !item.menuActions && !There.justUsed(item)) {
+      const known = There.knownActions(item);
+      if (known) {
+        item.menuActions = known;
+      }
+    }
     There.buildItemMenu(card, item);
     There.refreshWornState(card, item);
     if (item.interactions && !item.menuActions) {
-      There.refreshInvActions(card, item);
+      There.refreshInvActions(card, item, true);
+    }
+  },
+
+  /* ------- actions remembered per kind of item -------
+   * Every drink of the same kind, every hoverboard, every builder kit has the same
+   * action list, so once we've read one item's menu we keep that list for the
+   * kind and skip the read for the rest. The kind is the item's icon plus the
+   * labels the inventory table gives it. The table labels follow the item's
+   * state (Take Out vs Put Back), so a board that's out is a different kind from
+   * one that's stowed and they never get each other's buttons. */
+
+  actionTypesKey: 'dock.actiontypes',
+
+  actionTypeKey: function(item) {
+    if (!item || !item.interactions) {
+      return null;
+    }
+    const labels = item.interactions.split(',').map(p => (p.split(':').slice(1).join(':')).trim()).filter(Boolean);
+    if (!labels.length) {
+      return null;
+    }
+    return (item.builder ? 'builder' : (item.icon || '')) + '|' + labels.join(',');
+  },
+
+  actionTypes: function() {
+    if (!There.data.actionTypes) {
+      try {
+        const raw = JSON.parse(localStorage.getItem(There.actionTypesKey) || '{}');
+        There.data.actionTypes = (raw && typeof raw.types == 'object') ? raw.types : {};
+      } catch (error) {
+        There.data.actionTypes = {};
+      }
+    }
+    return There.data.actionTypes;
+  },
+
+  saveActionTypes: function() {
+    try {
+      localStorage.setItem(There.actionTypesKey, JSON.stringify({ types: There.actionTypes() }));
+    } catch (error) {
+    }
+  },
+
+  knownActions: function(item) {
+    const key = There.actionTypeKey(item);
+    const list = key && There.actionTypes()[key];
+    return list && list.length ? list.slice() : null;
+  },
+
+  // remember a menu read for this kind, but only when it agrees with the table
+  // (every table label is in the menu). If it doesn't, the item changed state
+  // since the last sync and the read only fits this one item right now
+  learnActions: function(item, names) {
+    const key = There.actionTypeKey(item);
+    if (!key || !names || !names.length) {
+      return;
+    }
+    const have = names.map(n => n.toLowerCase());
+    const table = key.slice(key.indexOf('|') + 1).split(',');
+    if (!table.every(l => have.includes(l.toLowerCase()))) {
+      return;
+    }
+    const types = There.actionTypes();
+    if (String(types[key]) == String(names)) {
+      return;
+    }
+    types[key] = names.slice();
+    // keep it small, drop the oldest kinds
+    const keys = Object.keys(types);
+    if (keys.length > 400) {
+      for (const k of keys.slice(0, keys.length - 400)) {
+        delete types[k];
+      }
+    }
+    There.saveActionTypes();
+  },
+
+  // used one of its actions in the last few minutes: its table labels may still
+  // show the old state until the next sync, so read it live instead
+  justUsed: function(item) {
+    return !!item.actedAt && Date.now() - item.actedAt < 5 * 60 * 1000;
+  },
+
+  forgetActions: function(item) {
+    const key = There.actionTypeKey(item);
+    const types = There.actionTypes();
+    if (key && types[key]) {
+      delete types[key];
+      There.saveActionTypes();
     }
   },
 
@@ -3673,6 +4491,7 @@ There.init({
           if (a.kind == 'verb') {
             // inventory actions change the menu (Take Out <-> Put Back): keep the bar open
             // and re-read the real actions shortly after
+            item.actedAt = Date.now();
             There.setNamedTimer('menu-rebuild', 1100, function() {
               if (There.data.menuOpen && There.data.menuItem === item) {
                 item.menuActions = null;
@@ -3692,13 +4511,29 @@ There.init({
     There.data.menuOpen = true;
   },
 
+  // redraw the open panel now, or as soon as the item action bar closes
+  renderWhenFree: function() {
+    if (There.data.menuOpen) {
+      There.data.renderPending = true;
+    } else {
+      There.renderFolderView();
+    }
+  },
+
   clearItemMenu: function() {
     $('.actionbar').attr('data-active', '0').attr('data-mode', '');
     $('.actionbar .abactions').empty();
     $('.actionbar .abthumb').css('background-image', '').text('');
     $('.actionbar .abname').text('');
+    const wasOpen = There.data.menuOpen;
     There.data.menuOpen = false;
     There.data.menuItem = null;
+    if (wasOpen && There.data.renderPending) {
+      There.data.renderPending = false;
+      if (There.data.panel == 'inventory' || There.data.panel == 'wardrobe') {
+        There.renderFolderView();
+      }
+    }
   },
 
   // swap the action buttons for a folder chooser: a chip per folder (current one
@@ -4097,6 +4932,14 @@ There.init({
             }
             There.data.myThingsBuilt = 0;
             There.invokeInventoryMenuAction(item, label, true);
+          } else if (!ok) {
+            // still no luck: the remembered list for this kind may be wrong for it,
+            // forget it and read this item's own menu
+            There.forgetActions(item);
+            item.menuActions = null;
+            if (There.data.menuOpen && There.data.menuItem === item) {
+              There.refreshInvActions(null, item);
+            }
           }
         },
       });
@@ -4105,13 +4948,18 @@ There.init({
 
   // fetch an item's REAL action list from its menu node (more than the inventory
   // table has: Give, Lend, Trade, Auction...) and rebuild the bar once known
-  refreshInvActions: function(card, item) {
+  // learn = this read can teach the item's kind (not after we just used an
+  // action: the table hasn't caught up with the new state yet)
+  refreshInvActions: function(card, item, learn) {
     There.inventoryMenuPath(item, function(path) {
       if (!path) {
         return;
       }
       There.menuKids(path, function(names) {
         if (names && names.length) {
+          if (learn) {
+            There.learnActions(item, names);
+          }
           item.menuActions = names;
           if (There.data.menuOpen && There.data.menuItem === item) {
             There.buildItemMenu(card, item);
@@ -4130,17 +4978,143 @@ There.init({
       dataType: 'html',
       timeout: 8000,
       success: function(html) {
-        const items = There.parseInventoryTable(html);
-        const sig = items.map(i => `${i.doid}:${i.name}`).join('|');
-        const changed = sig !== There.data.invSig;
-        There.data.invSig = sig;
-        There.data.inventory = items;
-        done(changed, false);
+        const table = There.parseInventoryTable(html);
+        // builder items aren't in the inventory table, add them from their own list
+        There.fetchBuilderItems(function(builder) {
+          const items = table.concat(builder).sort((a, b) => a.name.localeCompare(b.name));
+          const sig = items.map(i => `${i.doid}:${i.name}`).join('|');
+          const changed = sig !== There.data.invSig;
+          There.data.invSig = sig;
+          There.data.inventory = items;
+          done(changed, false);
+        });
       },
       error: function() {
         done(false, true);
       },
     });
+  },
+
+  // Builder items (add-on kits: rugs, ramps, signs...) live under
+  // /pilotPobs/extensions with just a name and status, and the inventory table
+  // leaves them out. Their actions (Take One Out, Give, Trade...) sit in the My
+  // Things menu like any other item, so they work through the same menu path.
+  // Names are cached by oid so a sync only looks up new ones.
+  BUILDER_ACTIONS: '1:Take One Out,2:Give,3:Trade,4:Auction,5:Return,6:About',
+
+  fetchBuilderItems: function(cb) {
+    const cache = There.data.builderNames = There.data.builderNames || {};
+    There.fetch({
+      path: '/ScriptHook/Get',
+      query: { Path: '/pilotPobs/extensions' },
+      dataType: 'xml',
+      success: function(xml) {
+        const oids = [];
+        try {
+          for (const child of xml.getElementsByTagName('Child')) {
+            const oid = child.getElementsByTagName('Name')[0]?.childNodes[0]?.nodeValue;
+            if (oid && /^\d+$/.test(oid)) {
+              oids.push(oid);
+            }
+          }
+        } catch (error) {
+        }
+        const missing = oids.filter(o => cache[o] === undefined);
+        const photos = There.itemPhotos();
+        const finish = function() {
+          cb(oids.filter(o => cache[o]).map(o => ({
+            doid: o,
+            name: cache[o],
+            // set once "Cache all photos" has read this item's About page
+            productId: photos[o] ? photos[o].productId : '',
+            status: 'Builder',
+            interactions: There.BUILDER_ACTIONS,
+            icon: '',
+            glyph: '🧱',
+            builder: true,
+          })));
+        };
+        // a couple at a time, the local server is single threaded
+        let next = 0;
+        let running = 0;
+        const pump = function() {
+          if (next >= missing.length && running == 0) {
+            finish();
+            return;
+          }
+          while (running < 2 && next < missing.length) {
+            const oid = missing[next++];
+            running++;
+            There.fetch({
+              path: '/ScriptHook/Get',
+              query: { Path: `/pilotPobs/extensions/${oid}/name` },
+              dataType: 'xml',
+              success: function(x) {
+                cache[oid] = x.getElementsByTagName('Value')[0]?.childNodes[0]?.nodeValue || '';
+              },
+              complete: function() {
+                running--;
+                pump();
+              },
+            });
+          }
+        };
+        pump();
+      },
+      error: function() {
+        cb([]);
+      },
+    });
+  },
+
+  // Inventory item photos read off About pages by the photo sweep (builder items,
+  // and anything the catalog list doesn't cover): doid -> { productId, image },
+  // saved per avatar. The image is registered with CatalogImages under the real
+  // product id so every card / slot / action bar finds it.
+  itemPhotosKey: function() {
+    return `dock.itemphotos.${There.data.pilotDoid || 0}`;
+  },
+
+  itemPhotos: function() {
+    if (!There.data.itemPhotos) {
+      try {
+        There.data.itemPhotos = JSON.parse(localStorage.getItem(There.itemPhotosKey()) || '{}') || {};
+      } catch (error) {
+        There.data.itemPhotos = {};
+      }
+      for (const oid in There.data.itemPhotos) {
+        There.registerItemPhoto(There.data.itemPhotos[oid]);
+      }
+    }
+    return There.data.itemPhotos;
+  },
+
+  registerItemPhoto: function(p) {
+    if (p && p.productId && p.image && !CatalogImages.map[p.productId]) {
+      CatalogImages.map[p.productId] = { small: p.image, medium: p.image, large: p.image };
+    }
+  },
+
+  // no catalog photo yet (a small game icon doesn't count, we want the real photo)
+  itemNeedsPhoto: function(it) {
+    if ((it.productId && CatalogImages.map[it.productId]) || There.itemPhotos()[it.doid]) {
+      return false;
+    }
+    return true;
+  },
+
+  saveItemPhoto: function(oid, info) {
+    const photos = There.itemPhotos();
+    photos[oid] = { productId: info.productId, image: info.image };
+    There.registerItemPhoto(photos[oid]);
+    try {
+      localStorage.setItem(There.itemPhotosKey(), JSON.stringify(photos));
+    } catch (error) {
+    }
+    const it = (There.data.inventory || []).find(i => String(i.doid) === String(oid));
+    if (it && !it.productId) {
+      it.productId = info.productId;
+    }
   },
 
   loadInventory: function() {
@@ -4174,7 +5148,7 @@ There.init({
     }
     There.data.syncStarted = true;
     There.setSyncNote('Syncing inventory…');
-    There.fetchInventoryData(function() {
+    There.settleInventory(function() {
       const clothing = function() {
         There.setSyncNote('Loading clothing…');
         const after = function() {
@@ -4213,15 +5187,54 @@ There.init({
   },
 
   scheduleSync: function() {
+    There.data.syncLast = Date.now();
     There.setNamedTimer('periodic-sync', There.SYNC_INTERVAL, There.incrementalSync);
+    // watchdog: if nothing reschedules us for 3 minutes the chain died, start again
+    There.setNamedTimer('sync-watchdog', 3 * 60 * 1000, function() {
+      if (Date.now() - (There.data.syncLast || 0) >= 3 * 60 * 1000) {
+        There.data.syncRunning = false; // a sync that never finished doesn't count
+        There.incrementalSync();
+      }
+    });
+  },
+
+  // Right after login the client is still filling the inventory, so the first read
+  // can come back short. Re-read every few seconds until the count holds still for
+  // two reads in a row (give up after a minute), updating an open panel as it fills.
+  settleInventory: function(done) {
+    const started = Date.now();
+    let lastCount = -1;
+    let stable = 0;
+    const read = function() {
+      There.fetchInventoryData(function(changed) {
+        const count = (There.data.inventory || []).length;
+        stable = count > 0 && count == lastCount ? stable + 1 : 0;
+        lastCount = count;
+        if (changed && There.data.panel == 'inventory' && !There.data.menuOpen) {
+          There.renderFolderView();
+        }
+        if (stable >= 2 || Date.now() - started > 60000) {
+          done();
+          return;
+        }
+        There.setSyncNote(`Syncing inventory… ${count} items`);
+        There.setNamedTimer('inventory-settle', 4000, read);
+      });
+    };
+    read();
   },
 
   incrementalSync: function(manual) {
+    // one at a time: a nudge while a sync is running is covered by that sync
+    if (There.data.syncRunning) {
+      return;
+    }
     // back off while the service is down or heavy work is running
     if (!There.data.cockpitUp || There.data.sweep || There.data.mapWaiters || There.data.loadingAcc) {
       There.scheduleSync();
       return;
     }
+    There.data.syncRunning = true;
     if (manual) {
       There.setSyncNote('Syncing…');
     }
@@ -4241,17 +5254,18 @@ There.init({
           }
           There.saveMyThingsMap();
         }
-        if (There.data.panel == 'inventory' && !There.data.menuOpen) {
-          There.renderFolderView();
+        if (There.data.panel == 'inventory') {
+          There.renderWhenFree();
         }
       }
       There.syncAccoutrements(function(clothChanged) {
-        if (clothChanged && There.data.panel == 'wardrobe' && !There.data.menuOpen) {
-          There.renderFolderView();
+        if (clothChanged && There.data.panel == 'wardrobe') {
+          There.renderWhenFree();
         }
         if (manual) {
           There.setSyncNote('');
         }
+        There.data.syncRunning = false;
         There.updateSyncStatus();
         There.scheduleSync();
       });
@@ -4364,7 +5378,10 @@ There.init({
     const t = new Date();
     const hh = String(t.getHours()).padStart(2, '0');
     const mm = String(t.getMinutes()).padStart(2, '0');
-    $('.syncstatus').text(`${inv} items · ${acc} clothing · ${map} action paths · updated ${hh}:${mm}`);
+    const chatWay = There.data.chatRelayAt ? ' · chat via Command Bar' : (There.data.chatPollOn ? ' · chat direct' : '');
+    const pinned = There.data.shapeOn ? ' · window pinned' : '';
+    const spd = There.data.speedoNote ? ` · speedo: ${There.data.speedoNote}` : '';
+    $('.syncstatus').text(`${inv} items · ${acc} clothing · ${map} action paths · updated ${hh}:${mm}${chatWay}${pinned}${spd}`);
   },
 
   /* ------- unified folder view (inventory + wardrobe categories) -------
@@ -4491,6 +5508,12 @@ There.init({
       prefs.keymap = raw.keymap !== false;
       // other people's GIFs: default on
       prefs.gifs = raw.gifs !== false;
+      // speedometer while driving: default on
+      prefs.speedo = raw.speedo !== false;
+      // the saved button order (Settings > Dock buttons)
+      if (Array.isArray(raw.dockOrder)) {
+        prefs.dockOrder = raw.dockOrder.filter(id => typeof id == 'string');
+      }
     } catch (error) {
     }
     return prefs;
@@ -4527,12 +5550,39 @@ There.init({
   applyTheme: function() {
     const t = There.prefs().theme;
     const root = document.documentElement;
+    // blend the accent into a dark base color, "r, g, b" out
+    const mix = function(base, frac, hex) {
+      const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+      if (!m) {
+        return null;
+      }
+      const n = parseInt(m[1], 16);
+      const a = [n >> 16 & 255, n >> 8 & 255, n & 255];
+      return base.map((b, i) => Math.round(b * (1 - frac) + a[i] * frac)).join(', ');
+    };
     if (t && t.accent) {
       root.style.setProperty('--accent', t.accent);
       root.style.setProperty('--accent-bright', t.bright || t.accent);
+      // full theme: pull the dark surfaces toward the accent too, so the pill,
+      // panels, menus and tooltips all match instead of staying plain slate
+      const tint = mix([17, 21, 28], 0.16, t.accent);
+      if (tint) {
+        root.style.setProperty('--tint', tint);
+        root.style.setProperty('--tint-deep', mix([12, 16, 22], 0.13, t.accent));
+        root.style.setProperty('--tint-raised', mix([28, 35, 45], 0.18, t.accent));
+      }
     } else {
       root.style.removeProperty('--accent');
       root.style.removeProperty('--accent-bright');
+      root.style.removeProperty('--tint');
+      root.style.removeProperty('--tint-deep');
+      root.style.removeProperty('--tint-raised');
+    }
+    // publish for the communicator and message bar, they follow along live
+    try {
+      localStorage.setItem('tmui-theme', JSON.stringify(
+        t && t.accent ? { accent: t.accent, bright: t.bright || t.accent } : null));
+    } catch (error) {
     }
   },
 
@@ -4558,10 +5608,70 @@ There.init({
     }
   },
 
+  // the buttons in their saved order. ids that are gone get dropped, buttons a
+  // newer version adds slot in at their stock spot instead of vanishing
+  dockButtonOrder: function() {
+    const saved = There.prefs().dockOrder;
+    if (!Array.isArray(saved) || !saved.length) {
+      return There.DOCK_BUTTONS.slice();
+    }
+    const left = {};
+    for (const b of There.DOCK_BUTTONS) {
+      left[b.id] = b;
+    }
+    const out = [];
+    for (const id of saved) {
+      if (left[id]) {
+        out.push(left[id]);
+        delete left[id];
+      }
+    }
+    for (const b of There.DOCK_BUTTONS) {
+      if (left[b.id]) {
+        out.push(b);
+      }
+    }
+    return out;
+  },
+
+  // swap a button with its nearest neighbor in the SAME section, so moving
+  // never pulls a button out of its group
+  moveDockButton: function(id, dir) {
+    const order = There.dockButtonOrder();
+    const ids = order.map(b => b.id);
+    const i = ids.indexOf(id);
+    if (i < 0) {
+      return;
+    }
+    const step = dir < 0 ? -1 : 1;
+    let j = i + step;
+    while (j >= 0 && j < order.length && order[j].group != order[i].group) {
+      j += step;
+    }
+    if (j < 0 || j >= order.length) {
+      return;
+    }
+    ids[i] = ids[j];
+    ids[j] = id;
+    There.prefs().dockOrder = ids;
+    There.savePrefs();
+    There.applyDockPrefs();
+    There.renderDockToggles();
+    There.playSound('control down');
+  },
+
   // show/hide dock buttons per prefs, dock auto-sizes its width
   applyDockPrefs: function() {
     for (const b of There.DOCK_BUTTONS) {
       $(`.dock .item[data-id="${b.id}"]`).attr('data-off', There.dockButtonOn(b.id) ? '' : '1');
+    }
+    // arrange each section in the saved order (appendChild moves in place)
+    for (const b of There.dockButtonOrder()) {
+      const wrap = $(`.dock .dockitems[data-group="${b.group}"]`)[0];
+      const el = $(`.dock .item[data-id="${b.id}"]`)[0];
+      if (wrap && el) {
+        wrap.appendChild(el);
+      }
     }
     // open Library lists hidden buttons, keep it current
     if (There.data.panel == 'apps') {
@@ -4626,12 +5736,41 @@ There.init({
     prefRow('Compact dock', 'compact', '.appeartoggles');
     prefRow('Compass', 'showCompass', '.appeartoggles');
     prefRow('Tbux balance', 'showTbux', '.appeartoggles');
+    prefRow('Speedometer when driving', 'speedo', '.appeartoggles');
     prefRow('Action Mode keys (WASD, Space, R)', 'keymap', '.controltoggles');
     prefRow('Show GIFs from other ModernUI users', 'gifs', '.giftoggles');
-    for (const b of There.DOCK_BUTTONS) {
+    // rows follow the dock order, split under the same section headings as the
+    // pill itself; the arrows move a button inside its section only
+    const order = There.dockButtonOrder();
+    let lastGroup = null;
+    for (let i = 0; i < order.length; i++) {
+      const b = order[i];
+      if (b.group != lastGroup) {
+        lastGroup = b.group;
+        $('<div class="dtgroup"></div>').text(There.DOCK_GROUPS[b.group] || b.group).appendTo($(host));
+      }
+      const firstOfGroup = !order.some((o, k) => k < i && o.group == b.group);
+      const lastOfGroup = !order.some((o, k) => k > i && o.group == b.group);
       const on = There.dockButtonOn(b.id);
       let row = $('<div class="dtrow"></div>');
       $('<span></span>').text(b.name).appendTo($(row));
+      let mv = $('<div class="dtmove"></div>');
+      (function(id) {
+        let up = $('<span title="Move left on the dock">▲</span>').on('click', function() {
+          There.moveDockButton(id, -1);
+        });
+        let down = $('<span title="Move right on the dock">▼</span>').on('click', function() {
+          There.moveDockButton(id, 1);
+        });
+        if (firstOfGroup) {
+          $(up).css('visibility', 'hidden');
+        }
+        if (lastOfGroup) {
+          $(down).css('visibility', 'hidden');
+        }
+        $(mv).append(up, down);
+      })(b.id);
+      $(mv).appendTo($(row));
       let sw = $('<div class="qeswitch"></div>').attr('data-on', on ? '1' : '0');
       $('<div class="qeknob"></div>').appendTo($(sw));
       (function(id) {
@@ -4674,9 +5813,34 @@ There.init({
     }
   },
 
+  // redraw the footer count line for the open panel
+  refreshFooter: function() {
+    const n = parseInt($('.footcount').text(), 10);
+    if (!isNaN(n)) {
+      There.setFooterCount(n);
+    }
+  },
+
   // footer "N items" count
   setFooterCount: function(n) {
     $('.footcount').text(n + (n == 1 ? ' item' : ' items'));
+    let missing = 0;
+    if (There.data.panel == 'inventory') {
+      missing = (There.data.inventory || []).filter(i => There.itemNeedsPhoto(i)).length;
+    } else if (There.data.panel == 'wardrobe') {
+      missing = (There.data.accoutrements || []).filter(a => !CatalogImages.poids[a.poid]).length;
+    }
+    if (There.data.sweep) {
+      $('<span class="footphotos"></span>')
+        .text(' · fixing photos · ')
+        .append($('<a class="footstop"></a>').text('Stop'))
+        .appendTo($('.footcount'));
+    } else if (missing) {
+      $('<span class="footphotos"></span>')
+        .text(` · ${missing} without photos · `)
+        .append($('<a class="footcache"></a>').text('Fix them'))
+        .appendTo($('.footcount'));
+    }
   },
 
   // rename/delete a folder (folder card context menu or action)
@@ -5029,6 +6193,39 @@ $(document).ready(function() {
     event.stopPropagation();
   });
 
+  // drag the gauge cluster anywhere and remember the spot. while dragging, the
+  // whole window takes the mouse so the pointer can't outrun the input shape
+  $('.speedo').on('mousedown', function(event) {
+    if (event.which != 1) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const el = $('.speedo')[0];
+    const start = el.getBoundingClientRect();
+    const sx = event.clientX;
+    const sy = event.clientY;
+    $(el).attr('data-dragging', '1');
+    if (There.data.shapeOn) {
+      There.data.shapeSent = null;
+      There.fsCommand('tmuiShape', 'rects=all');
+    }
+    const move = function(ev) {
+      const r = Math.max(2, Math.min(window.innerWidth - start.width - 2,
+        window.innerWidth - start.right - (ev.clientX - sx)));
+      const b = Math.max(2, Math.min(window.innerHeight - start.height - 2,
+        window.innerHeight - start.bottom - (ev.clientY - sy)));
+      $(el).css({ right: `${r}px`, bottom: `${b}px` });
+    };
+    const up = function() {
+      $(document).off('mousemove', move).off('mouseup', up);
+      $(el).attr('data-dragging', '');
+      There.saveSpeedoPos();
+      There.syncWindowShape();
+    };
+    $(document).on('mousemove', move).on('mouseup', up);
+  });
+
   // close the action bar on any click that isn't a card or the bar
   $(document).on('mousedown', function(event) {
     if (There.data.menuOpen && $(event.target).closest('.actionbar, .grid .card').length == 0) {
@@ -5085,6 +6282,12 @@ $(document).ready(function() {
     There.playSound('control down');
     const sec = $(this).closest('.setsection');
     $(sec).attr('data-open', $(sec).attr('data-open') == '1' ? '0' : '1');
+  });
+
+  // Settings: clear learned images (item photos + clothing map)
+  $('.button.clearimgs').on('click', function() {
+    There.playSound('control down');
+    There.clearPhotoCache();
   });
 
   // Settings: manual sync
@@ -5275,6 +6478,20 @@ $(document).ready(function() {
   });
   // GIFs: search (debounced + cached to go easy on the API key) and the
   // received-GIF card (click to dismiss)
+  // panel footer "Cache them": run the photo sweep from where the gap is seen
+  $(document).on('click', '.footcache', function() {
+    There.playSound('control down');
+    if (!There.data.sweep) {
+      There.startCacheSweep();
+    }
+    There.refreshFooter();
+  });
+  $(document).on('click', '.footstop', function() {
+    There.playSound('control down');
+    There.cancelCacheSweep();
+    There.refreshFooter();
+  });
+
   $('.gifsearch input').on('click', function() {
     if (!$(this).is(':focus')) {
       There.fsCommand('getKeyboardFocus');
@@ -5356,6 +6573,12 @@ $(document).ready(function() {
   // message bar auto-accepted an Action Mode prompt (e.g. gun out), so Action
   // Mode may have changed behind our back. re-read it
   window.addEventListener('storage', function(event) {
+    // message bar saw something (purchase, gift, trade...): sync shortly
+    if (event.key == 'tmui-msg-activity' && There.data.syncStarted) {
+      There.setNamedTimer('activity-sync', 1500, function() {
+        There.incrementalSync();
+      });
+    }
     if (event.key == 'tmui-actionmode-accepted') {
       There.setNamedTimer('actionmode-accepted', 800, There.refreshActionMode);
     }
@@ -5400,6 +6623,7 @@ $(document).ready(function() {
       y = Math.max(2, Math.min(y, window.innerHeight - th - 2));
       tip.style.left = x + 'px';
       tip.style.top = y + 'px';
+      There.syncWindowShape();
     });
   }).on('mouseout', '[data-tmtip]', function(event) {
     // ignore moves between the element's own children
@@ -5416,9 +6640,11 @@ $(document).ready(function() {
     }
     There.clearNamedTimer('tmtip');
     $('.tmtip').attr('data-active', '0');
+    There.syncWindowShape();
   }).on('mousedown', function() {
     There.clearNamedTimer('tmtip');
     $('.tmtip').attr('data-active', '0');
+    There.syncWindowShape();
   });
 
   // fill [data-icon] elements with their inline SVG (monochrome via currentColor, see icons.js)

@@ -2,7 +2,11 @@
    Styles for the dock, its panels and the quick bar.
    Author: DANKIES */
 :root {
-  --bg: rgba(17, 21, 28, 0.90);
+  /* dark surfaces as r,g,b so the picked theme can tint all of them (applyTheme) */
+  --tint: 17, 21, 28;
+  --tint-deep: 12, 16, 22;
+  --tint-raised: 28, 35, 45;
+  --bg: rgba(var(--tint), 0.90);
   --bg-hover: rgba(255, 255, 255, 0.08);
   --border: rgba(255, 255, 255, 0.14);
   --border-strong: rgba(255, 255, 255, 0.20);
@@ -34,8 +38,9 @@ body {
   left:0px;
   bottom:0px;
   /* room for the drop shadows so the window edge doesn't clip them.
-     syncWindowSize() measures this padded box */
-  padding:26px;
+     syncWindowSize() measures this padded box. kept small so the dock can
+     sit close to the screen edge, shadows below are tightened to fit */
+  padding:8px;
   display:inline-flex;
   flex-direction:column;
   align-items:center;
@@ -60,14 +65,319 @@ body {
   order:2;
 }
 
-.dock {
+.speedo {
   order:3;
+}
+
+.dock {
+  order:4;
 }
 
 .dock,
 .peek,
-.actionbar {
+.actionbar,
+.speedo {
   pointer-events:auto;
+}
+
+/* speedometer: floating gauge cluster above the pill, no card. big 240-degree
+   tacho with the accent arc sweeping like an RPM counter, small N2O boost dial
+   that kicks while right-click is held */
+.speedo {
+  display:none;
+  position:fixed;
+  right:10px;
+  bottom:132px;
+  z-index:6;
+  align-items:flex-start;
+  gap:2px;
+  background:none;
+  border:none;
+  padding:0px;
+  pointer-events:auto;
+  cursor:grab;
+}
+
+.speedo[data-dragging="1"] {
+  cursor:grabbing;
+}
+
+.speedo[data-active="1"] {
+  display:flex;
+}
+
+.speedo .spdmain {
+  position:relative;
+}
+
+.speedo .spdgauge {
+  width:168px;
+  height:168px;
+  overflow:visible;
+}
+
+.speedo .sgface {
+  fill:rgba(8, 11, 16, 0.55);
+}
+
+.speedo .sgtrack {
+  fill:none;
+  stroke:rgba(255, 255, 255, 0.10);
+  stroke-width:9;
+  stroke-linecap:round;
+}
+
+.speedo .sgred {
+  fill:none;
+  stroke:rgba(248, 113, 113, 0.55);
+  stroke-width:9;
+  stroke-linecap:round;
+}
+
+.speedo .sgfill {
+  fill:none;
+  stroke:var(--accent);
+  stroke-width:9;
+  stroke-linecap:round;
+  stroke-dasharray:360.2;
+  stroke-dashoffset:360.2;
+  filter:drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 85%, transparent));
+}
+
+.speedo .sgticks line {
+  stroke:rgba(232, 237, 242, 0.75);
+  stroke-width:2;
+}
+
+.speedo .sgticks line[data-minor="1"] {
+  stroke:rgba(232, 237, 242, 0.35);
+  stroke-width:1.2;
+}
+
+.speedo .sglabels .sglegend {
+  font-size:7.5px;
+  font-weight:600;
+  letter-spacing:1px;
+  fill:var(--text-dim);
+}
+
+.speedo .sglabels text {
+  fill:#e8edf2;
+  font-size:15px;
+  font-weight:700;
+  font-family:'Segoe UI', system-ui, sans-serif;
+  text-anchor:middle;
+}
+
+.speedo .sgneedle {
+  transform-origin:100px 104px;
+}
+
+.speedo .sgneedle line {
+  stroke:#dde4ec;
+  stroke-width:3.5;
+  stroke-linecap:round;
+  filter:drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+}
+
+.speedo .sghub {
+  fill:#aeb9c6;
+  stroke:rgba(0, 0, 0, 0.6);
+  stroke-width:2;
+}
+
+.speedo .spdreadout {
+  position:absolute;
+  left:50%;
+  bottom:12px;
+  transform:translateX(-50%);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:0px;
+  pointer-events:none;
+}
+
+.speedo .spdrow {
+  display:flex;
+  align-items:baseline;
+  gap:5px;
+}
+
+.speedo .spdgear {
+  font-family:Consolas, 'Courier New', monospace;
+  font-size:13px;
+  font-weight:700;
+  line-height:1;
+  color:var(--accent);
+  text-shadow:0 0 8px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.speedo .spdval {
+  font-family:Consolas, 'Courier New', monospace;
+  font-size:22px;
+  font-weight:700;
+  line-height:1;
+  color:#ffffff;
+  text-shadow:0 0 10px color-mix(in srgb, var(--accent) 70%, transparent);
+  font-variant-numeric:tabular-nums;
+}
+
+.speedo .spdunit {
+  font-size:7.5px;
+  font-weight:700;
+  letter-spacing:2px;
+  margin-top:1px;
+  text-transform:uppercase;
+  color:#cfd8e2;
+}
+
+
+/* boost dial */
+
+.speedo .spdboost {
+  width:62px;
+  height:43px;
+  margin-right:-10px;
+  margin-top:10px;
+  overflow:visible;
+}
+
+.speedo .sbface {
+  fill:rgba(8, 11, 16, 0.55);
+}
+
+.speedo .sbtrack {
+  fill:none;
+  stroke:rgba(255, 255, 255, 0.14);
+  stroke-width:6;
+  stroke-linecap:round;
+}
+
+/* nitro arc: rides with the needle, lights up hard on boost */
+.speedo .sbfill {
+  fill:none;
+  stroke:url(#n2ograd);
+  stroke-width:6;
+  stroke-linecap:round;
+  stroke-dasharray:106.8;
+  stroke-dashoffset:55;
+  transition:stroke-dashoffset 550ms ease;
+  filter:drop-shadow(0 0 3px rgba(34, 211, 238, 0.6));
+}
+
+.speedo[data-boost="1"] .sbfill {
+  stroke-dashoffset:7;
+}
+
+.speedo .sbred {
+  fill:none;
+  stroke:rgba(248, 113, 113, 0.8);
+  stroke-width:6;
+  stroke-linecap:round;
+}
+
+@keyframes n2opulse {
+  0%, 100% {
+    filter:drop-shadow(0 0 3px rgba(34, 211, 238, 0.8));
+  }
+  50% {
+    filter:drop-shadow(0 0 10px rgba(167, 139, 250, 0.95));
+  }
+}
+
+.speedo[data-boost="1"] .spdboost {
+  animation:n2opulse 0.8s ease-in-out infinite;
+}
+
+@keyframes n2otext {
+  0%, 100% {
+    opacity:1;
+  }
+  50% {
+    opacity:0.45;
+  }
+}
+
+.speedo[data-boost="1"] .sblabel {
+  animation:n2otext 0.5s ease-in-out infinite;
+}
+
+.speedo .sbneedle {
+  transform-origin:45px 50px;
+  transform:rotate(90deg);
+  transition:transform 550ms ease;
+}
+
+.speedo .sbneedle line {
+  stroke:#dde4ec;
+  stroke-width:2.5;
+  stroke-linecap:round;
+}
+
+.speedo[data-boost="1"] .sbneedle {
+  transform:rotate(168deg);
+}
+
+.speedo .sbhub {
+  fill:#aeb9c6;
+}
+
+.speedo .sblabel {
+  fill:#7dd3fc;
+  text-shadow:0 0 6px rgba(34, 211, 238, 0.8);
+  font-size:9px;
+  font-weight:700;
+  font-style:italic;
+  letter-spacing:1px;
+  text-anchor:middle;
+}
+
+/* reorderable button strip: renders as if the wrapper wasn't there, it only
+   exists so applyDockPrefs can arrange the buttons in the saved order */
+.dockitems {
+  display:contents;
+}
+
+/* section headings inside Settings > Dock buttons: full row of the 2-column
+   grid, so the rows of one section stay together under their heading */
+.dtgroup {
+  grid-column:1 / -1;
+  margin-top:7px;
+  font-size:9.5px;
+  font-weight:700;
+  letter-spacing:0.6px;
+  text-transform:uppercase;
+  color:var(--text-dim);
+}
+
+.dtgroup:first-child {
+  margin-top:0px;
+}
+
+/* up/down movers on the Settings > Dock buttons rows */
+.dtmove {
+  display:flex;
+  gap:2px;
+  margin-left:auto;
+  margin-right:10px;
+}
+
+.dtmove span {
+  width:16px;
+  height:16px;
+  line-height:16px;
+  text-align:center;
+  font-size:9px;
+  color:var(--text-dim);
+  border:1px solid var(--border);
+  border-radius:5px;
+  cursor:pointer;
+}
+
+.dtmove span:hover {
+  color:var(--accent-bright);
+  border-color:var(--accent);
 }
 
 /* cockpit gate */
@@ -91,7 +401,7 @@ body {
   justify-content:center;
   gap:10px;
   border-radius:14px;
-  background-color:rgba(12, 15, 20, 0.86);
+  background-color:rgba(var(--tint-deep), 0.86);
   backdrop-filter:blur(2px);
   pointer-events:auto;
 }
@@ -193,7 +503,7 @@ body {
   background-color:var(--bg);
   border:1px solid var(--accent);
   border-radius:14px;
-  box-shadow:0 6px 24px rgba(0, 0, 0, 0.5);
+  box-shadow:0 2px 6px rgba(0, 0, 0, 0.5);
 }
 
 .cgicon {
@@ -430,7 +740,7 @@ body {
   background-color:var(--bg);
   border:1px solid var(--border-strong);
   border-radius:14px;
-  box-shadow:0 6px 22px rgba(0, 0, 0, 0.45);
+  box-shadow:0 2px 6px rgba(0, 0, 0, 0.45);
   transition:width 200ms ease, transform 180ms ease, opacity 180ms ease;
 }
 
@@ -660,7 +970,7 @@ body {
   background-color:var(--bg);
   border:1px solid transparent;
   border-radius:14px;
-  box-shadow:0 6px 24px rgba(0, 0, 0, 0.5);
+  box-shadow:0 2px 6px rgba(0, 0, 0, 0.5);
   overflow:hidden;
   opacity:0;
   transition:height 200ms ease, opacity 160ms ease, margin-bottom 200ms ease;
@@ -878,9 +1188,9 @@ body {
   flex-direction:column;
   gap:9px;
   padding:14px;
-  background-color:rgba(12, 16, 22, 0.97);
+  background-color:rgba(var(--tint-deep), 0.97);
   border-top:1px solid var(--border-strong);
-  box-shadow:0 -8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow:0 -2px 6px rgba(0, 0, 0, 0.5);
 }
 
 .folderprompt[data-active="1"] {
@@ -1247,7 +1557,7 @@ body {
   background-color:var(--bg);
   border:1px solid transparent;
   border-radius:12px;
-  box-shadow:0 6px 24px rgba(0, 0, 0, 0.5);
+  box-shadow:0 2px 6px rgba(0, 0, 0, 0.5);
   overflow:hidden;
   opacity:0;
   transition:height 180ms ease, opacity 150ms ease, margin-bottom 180ms ease, padding 180ms ease;
@@ -2767,10 +3077,10 @@ body {
   font-size:11px;
   line-height:1.35;
   color:var(--text);
-  background-color:rgba(17, 21, 28, 0.96);
+  background-color:rgba(var(--tint), 0.96);
   border:1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius:7px;
-  box-shadow:0 4px 14px rgba(0, 0, 0, 0.45);
+  box-shadow:0 2px 6px rgba(0, 0, 0, 0.45);
   white-space:pre-line;
   pointer-events:none;
   opacity:0;
@@ -2863,7 +3173,7 @@ body {
   height:26px;
   box-sizing:border-box;
   padding:0px 8px;
-  background-color:#1c232d;
+  background-color:rgb(var(--tint-raised));
   color:var(--text);
   border:1px solid var(--border);
   border-radius:7px;
@@ -3311,7 +3621,7 @@ body {
   background-color:var(--bg);
   border:1px solid var(--border-strong);
   border-radius:12px;
-  box-shadow:0 6px 24px rgba(0, 0, 0, 0.5);
+  box-shadow:0 2px 6px rgba(0, 0, 0, 0.5);
   pointer-events:auto;
   cursor:pointer;
 }
@@ -3347,4 +3657,16 @@ body {
   font-weight:600;
   color:var(--accent);
   margin-left:4px;
+}
+
+/* footer nudge: items without photos */
+.footphotos {
+  color:var(--text-dim);
+}
+
+.footcache,
+.footstop {
+  color:var(--accent);
+  cursor:pointer;
+  text-decoration:underline;
 }

@@ -18,6 +18,39 @@
 </head>
 <body>
 <div class="dockroot" data-state="shown" data-ready="0" data-panel="" data-cockpit="checking">
+<div class="speedo" data-active="0" title="Speed">
+<svg class="spdboost" viewBox="0 0 90 62" aria-hidden="true">
+<defs>
+<linearGradient id="n2ograd" x1="0" y1="1" x2="1" y2="0">
+<stop offset="0" stop-color="#22d3ee"></stop>
+<stop offset="1" stop-color="#a78bfa"></stop>
+</linearGradient>
+</defs>
+<circle class="sbface" cx="45" cy="50" r="40"></circle>
+<path class="sbtrack" d="M 11 50 A 34 34 0 0 1 79 50"></path>
+<path class="sbfill" d="M 11 50 A 34 34 0 0 1 79 50"></path>
+<path class="sbred" d="M 69.0 26.0 A 34 34 0 0 1 79 50"></path>
+<g class="sbneedle"><line x1="45" y1="50" x2="18" y2="50"></line></g>
+<circle class="sbhub" cx="45" cy="50" r="3"></circle>
+<text class="sblabel" x="45" y="70">N2O</text>
+</svg>
+<div class="spdmain">
+<svg class="spdgauge" viewBox="0 0 200 200" aria-hidden="true">
+<circle class="sgface" cx="100" cy="104" r="92"></circle>
+<path class="sgtrack" d="M 25.5 147 A 86 86 0 1 1 174.5 147"></path>
+<path class="sgred" d="M 179.0 70.0 A 86 86 0 0 1 174.5 147"></path>
+<path class="sgfill" d="M 25.5 147 A 86 86 0 1 1 174.5 147"></path>
+<g class="sgticks"></g>
+<g class="sglabels"></g>
+<g class="sgneedle"><line x1="112" y1="104" x2="34" y2="104"></line></g>
+<circle class="sghub" cx="100" cy="104" r="7"></circle>
+</svg>
+<div class="spdreadout">
+<div class="spdrow"><span class="spdgear">N</span><span class="spdval">0</span></div>
+<span class="spdunit">mph</span>
+</div>
+</div>
+</div>
 <div class="dock">
 <div class="dockgate" title="The dock talks to the There client over the Client Bridge">
 <span class="dgdot"></span>
@@ -53,6 +86,7 @@
 <div class="heading">&mdash;</div>
 </div>
 <div class="sep"></div>
+<div class="dockitems" data-group="main">
 <div class="item" data-id="friends" title="People">
 <div class="glyph" data-icon="user-group"></div>
 <div class="label">Friends</div>
@@ -101,12 +135,9 @@
 <div class="glyph" data-icon="code"></div>
 <div class="label">Dev</div>
 </div>
-<div class="cockpitdot" title="Client Bridge: checking&#8230;"></div>
-<div class="tbux" title="Therebucks balance">
-<span class="tbicon" data-icon="coins"></span>
-<span class="tbamount">&mdash;</span>
 </div>
 <div class="sep"></div>
+<div class="dockitems" data-group="view">
 <div class="item mini" data-id="viewstd" title="Standard view">
 <div class="glyph" data-icon="camera"></div>
 </div>
@@ -116,7 +147,9 @@
 <div class="item mini" data-id="viewbody" title="Body mirror">
 <div class="glyph" data-icon="user"></div>
 </div>
+</div>
 <div class="sep"></div>
+<div class="dockitems" data-group="tools">
 <div class="item mini" data-id="actionmode" title="Action Mode (mouse steering)">
 <div class="glyph" data-icon="person-running"></div>
 </div>
@@ -125,6 +158,7 @@
 </div>
 <div class="item mini" data-id="quickbar" title="Quick Bar">
 <div class="glyph" data-icon="bolt"></div>
+</div>
 </div>
 <div class="item mini" data-id="apptray" title="Library: open anything that isn’t on the dock">
 <div class="glyph" data-icon="table-cells"></div>
@@ -135,6 +169,12 @@
 <div class="item mini" data-id="about" title="About ThereModernUI">
 <div class="glyph" data-icon="circle-info"></div>
 </div>
+<div class="sep"></div>
+<div class="tbux" title="Therebucks balance">
+<span class="tbicon" data-icon="coins"></span>
+<span class="tbamount">&mdash;</span>
+</div>
+<div class="cockpitdot" title="Client Bridge: checking&#8230;"></div>
 </div>
 </div>
 <div class="panel">
@@ -199,23 +239,9 @@
 <div class="sethint">Inventory, clothing and item actions sync at startup and refresh automatically, so things work instantly and background changes (purchases, trades, gifts) appear on their own.</div>
 <div class="setrow">
 <div class="button syncnow" title="Refresh inventory, clothing and item actions now">&#8635; Sync now</div>
+<div class="button clearimgs" title="Forget every learned item and clothing image so they load fresh">&#128465; Clear image cache</div>
 </div>
 <div class="setnote syncstatus"></div>
-<div class="setsub">Clothing photos</div>
-<div class="sethint">Clothing icons are Flash and can&#8217;t be shown directly. ThereModernUI reads each item&#8217;s real catalog photo once from its info page and caches it on this machine.</div>
-<div class="cachebar" data-state="idle">
-<div class="cacheactions">
-<div class="button cacheall" data-id="cacheall" title="Open each item's info page once so its photo caches">&#128247; Cache all clothing photos</div>
-<div class="button clearcache" data-id="clearcache" title="Clear cached clothing photos">Clear cache</div>
-</div>
-<div class="progress">
-<div class="pbar"><div class="pfill"></div></div>
-<span class="ptext"></span>
-<div class="pbtn" data-id="pause" title="Pause">&#10074;&#10074;</div>
-<div class="pbtn" data-id="resume" title="Resume">&#9658;</div>
-<div class="pbtn" data-id="cancel" title="Cancel">&#10005;</div>
-</div>
-</div>
 <div class="setsub">Folders backup</div>
 <div class="sethint">Your folders and the items in them are saved on this machine only, per avatar. Export a backup file before reinstalling There, then import it afterwards to restore them for this avatar.</div>
 <div class="setrow">

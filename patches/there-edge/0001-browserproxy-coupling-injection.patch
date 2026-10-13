@@ -37,7 +37,7 @@ index d6b2c3a..bb53789 100644
      if (FAILED(view->ExecuteScript(text, Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
          [this](HRESULT errorCode, LPCWSTR resultObjectAsJson) -> HRESULT
 diff --git a/BrowserProxy/coupling.js b/BrowserProxy/coupling.js
-index c9aca5d..e0b6cd9 100644
+index c9aca5d..c6cb5d9 100644
 --- a/BrowserProxy/coupling.js
 +++ b/BrowserProxy/coupling.js
 @@ -1,3 +1,12 @@
@@ -53,7 +53,7 @@ index c9aca5d..e0b6cd9 100644
  if (window.VoiceTrainer != undefined) {
    VoiceTrainer.style.display = 'none';
    VoiceTrainer.configState = 0;
-@@ -68,4 +77,55 @@ ActiveXObject.prototype.load = function(url) {
+@@ -68,4 +77,56 @@ ActiveXObject.prototype.load = function(url) {
    request.send();
  };
  
@@ -90,7 +90,8 @@ index c9aca5d..e0b6cd9 100644
 +      const imgs = document.getElementsByTagName('img');
 +      for (let k = 0; k < imgs.length; k++) {
 +        const src = imgs[k].getAttribute('src') || '';
-+        const im = src.match(/catalog\/media\/([a-z0-9_]+\.(?:jpg|jpeg|gif|png))/i);
++        // any filename chars: some have brackets, hyphens or %20 in them
++        const im = src.match(/catalog\/media\/([^"'?#\s│]+\.(?:jpg|jpeg|gif|png))/i);
 +        if (im) { image = im[1]; break; }
 +      }
 +

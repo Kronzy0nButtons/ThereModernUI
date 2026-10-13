@@ -256,11 +256,45 @@ There.init({
     }
   },
 
+  // follow the dock's theme (Settings > Appearance writes "tmui-theme"):
+  // accent plus a matching tint on the dark surfaces
+  applyTheme: function() {
+    let t = null;
+    try {
+      t = JSON.parse(localStorage.getItem('tmui-theme') || 'null');
+    } catch (error) {
+    }
+    const root = document.documentElement;
+    const m = /^#?([0-9a-f]{6})$/i.exec(t && t.accent || '');
+    if (m) {
+      const n = parseInt(m[1], 16);
+      const a = [n >> 16 & 255, n >> 8 & 255, n & 255];
+      const mix = function(base, frac) {
+        return base.map((b, i) => Math.round(b * (1 - frac) + a[i] * frac)).join(', ');
+      };
+      root.style.setProperty('--accent', t.accent);
+      root.style.setProperty('--bg', `rgba(${mix([17, 21, 28], 0.16)}, 0.88)`);
+      root.style.setProperty('--bg-menu', `rgb(${mix([28, 35, 45], 0.18)})`);
+      root.style.setProperty('--bg-active', `rgba(${a.join(', ')}, 0.18)`);
+    } else {
+      root.style.removeProperty('--accent');
+      root.style.removeProperty('--bg');
+      root.style.removeProperty('--bg-menu');
+      root.style.removeProperty('--bg-active');
+    }
+  },
+
   onReady: function() {
     // update gate (tmui/update.js), locks the window if there's a newer release
     if (typeof TmuiUpdate != 'undefined') {
       TmuiUpdate.start();
     }
+    There.applyTheme();
+    window.addEventListener('storage', function(event) {
+      if (event.key == 'tmui-theme') {
+        There.applyTheme();
+      }
+    });
     const settings = There.loadSettings();
     There.data.size = {
       width: settings.width,

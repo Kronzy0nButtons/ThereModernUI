@@ -76,6 +76,13 @@
         Buggy: { doid: 9101, product: 'buggy', out: false, verb: 'Drive' },
         Hoverboard: { doid: 9102, product: 'hoverboard', out: false, verb: 'Ride' },
       },
+      // builder items, like the real game: in My Things, not in the inventory table
+      Kit: {
+        'Heart Rug': { doid: 801, product: '', out: false, verb: 'Take One Out', builder: true },
+        'Loop D Loop Ramp': { doid: 802, product: '', out: false, verb: 'Take One Out', builder: true },
+        'Pine Tree Forest': { doid: 803, product: '', out: false, verb: 'Take One Out', builder: true },
+        'Beach Cabanas Red x3': { doid: 804, product: '', out: false, verb: 'Take One Out', builder: true },
+      },
     },
   };
 
@@ -90,6 +97,9 @@
 
   function itemActions(it) {
     const take = it.verb || (it.gun ? 'Aim' : 'Take Out');
+    if (it.builder) {
+      return ['Take One Out', 'Give', 'Trade', 'Auction', 'Return', 'About'];
+    }
     const acts = it.out ? ['Put Away'] : [take];
     if (it.gun && it.out) {
       acts.push('Reload');
@@ -144,6 +154,26 @@
         return value(c.wearing ? 1 : 0);
       }
       return kids(['About', 'Put on', 'Take off']);
+    }
+    if (p[0] == 'pilotPobs' && p[1] == 'extensions') {
+      const kit = world.items.Kit;
+      const byOid = {};
+      for (const name in kit) {
+        byOid[kit[name].doid] = name;
+      }
+      if (p.length == 2) {
+        return kids(Object.keys(byOid));
+      }
+      if (!byOid[p[2]]) {
+        return fail();
+      }
+      if (p[3] == 'name') {
+        return value(byOid[p[2]]);
+      }
+      if (p[3] == 'status') {
+        return value('Add-on Kit');
+      }
+      return kids(['status', 'name']);
     }
     if (path == '/mainMenu/There/Customize/World/Default to Action Mode/marked') {
       return value(world.actionMode ? 1 : 0);
@@ -240,6 +270,9 @@
     for (const folder in world.items) {
       for (const name in world.items[folder]) {
         const it = world.items[folder][name];
+        if (it.builder) {
+          continue;
+        }
         const acts = ['About', it.gun ? 'Aim' : (it.verb || 'Take Out'), 'Give', 'Trade', it.gun ? 'Reload' : 'Lend'];
         rows += `<tr><td>possession</td><td>${it.doid}</td><td>${name}</td><td>${it.product}</td><td>1</td><td>${it.out ? 'In use' : ''}</td>` +
           `<td>${acts.map((a, i) => `${i + 1}:${a}`).join(',')}</td><td></td></tr>`;

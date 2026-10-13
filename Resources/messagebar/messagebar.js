@@ -26,6 +26,21 @@ There.init({
       depth: 32,
     });
 
+    There.applyTheme();
+    window.addEventListener('storage', function(event) {
+      if (event.key == 'tmui-theme') {
+        There.applyTheme();
+      }
+    });
+
+    // card width follows the message text, keep the clickable part in step
+    try {
+      new ResizeObserver(function() {
+        There.syncShape();
+      }).observe($('.messagebar .animator')[0]);
+    } catch (error) {
+    }
+
     // preload so the first toast isn't late
     try {
       There.data.toastAudio = new Audio('notification.mp3');
@@ -210,6 +225,14 @@ There.init({
           There.data.messages.push(message);
           break;
         }
+      }
+    }
+    // ThereModernUI: purchases, gifts, trades and returns all come through here, so
+    // nudge the dock to sync now instead of waiting for its next round
+    if (xmlData.childNodes.length) {
+      try {
+        localStorage.setItem('tmui-msg-activity', String(Date.now()));
+      } catch (error) {
       }
     }
     for (let autoAccept of autoAccepts) {
@@ -441,18 +464,73 @@ There.init({
         width: 800,
         height: 58,
       });
+      // sit above the dock instead of behind it (our FlashProxy; stock ignores it)
+      There.fsCommand('tmuiRaise');
+      There.syncShape();
+      // again once the slide-in transition has settled
+      There.setNamedTimer('shape', 300, There.syncShape);
     }
   },
 
   hideMessageBar: function() {
     if ($('.messagebar').attr('data-msgbaropened') != 0) {
       $('.messagebar').attr('data-msgbaropened', '0');
+      There.syncShape();
       There.setNamedTimer('animator', 500, function() {
         There.fsCommand('setWidthHeight', {
           width: 0,
           height: 0,
         });
       });
+    }
+  },
+
+  // tell FlashProxy which part of the window the card really uses: with the card
+  // now narrow, clicks past its edge land in the world (or on the dock below)
+  syncShape: function() {
+    let value = '';
+    if ($('.messagebar').attr('data-msgbaropened') == '1') {
+      const card = $('.messagebar .animator')[0];
+      if (card) {
+        const r = card.getBoundingClientRect();
+        if (r.width > 2 && r.height > 2) {
+          const pad = 6;
+          const dpr = window.devicePixelRatio || 1;
+          value = [
+            Math.max(0, Math.floor((r.left - pad) * dpr)),
+            Math.max(0, Math.floor((r.top - pad) * dpr)),
+            Math.ceil((r.width + 2 * pad) * dpr),
+            Math.ceil((r.height + 2 * pad) * dpr),
+          ].join(',');
+        }
+      }
+    }
+    if (value === There.data.shapeSent) {
+      return;
+    }
+    There.data.shapeSent = value;
+    There.fsCommand('tmuiShape', `rects=${value}`);
+  },
+
+  // follow the dock's theme (Settings > Appearance writes "tmui-theme")
+  applyTheme: function() {
+    let t = null;
+    try {
+      t = JSON.parse(localStorage.getItem('tmui-theme') || 'null');
+    } catch (error) {
+    }
+    const root = document.documentElement;
+    const m = /^#?([0-9a-f]{6})$/i.exec(t && t.accent || '');
+    if (m) {
+      const n = parseInt(m[1], 16);
+      const a = [n >> 16 & 255, n >> 8 & 255, n & 255];
+      const base = [17, 21, 28];
+      const tint = base.map((b, i) => Math.round(b * 0.84 + a[i] * 0.16)).join(', ');
+      root.style.setProperty('--accent', t.accent);
+      root.style.setProperty('--bg', `rgba(${tint}, 0.92)`);
+    } else {
+      root.style.removeProperty('--accent');
+      root.style.removeProperty('--bg');
     }
   },
 });
