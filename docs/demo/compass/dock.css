@@ -3670,3 +3670,11 @@ body {
   cursor:pointer;
   text-decoration:underline;
 }
+
+/* the update lock (tmui/update.js) defaults to covering the whole viewport,
+   which in the pinned window is mostly clipped space. On the dock page, pin it
+   over the dock itself instead */
+.tmui-update {
+  inset:auto 8px 8px 8px !important;
+  min-height:96px;
+}
