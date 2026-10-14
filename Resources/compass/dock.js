@@ -682,13 +682,18 @@ There.init({
   },
 
   setSpeedo: function(on) {
-    if (on && $('.speedo').attr('data-active') != '1') {
+    const was = $('.speedo').attr('data-active') == '1';
+    if (on && !was) {
       // show first so the position code can measure it
       $('.speedo').attr('data-active', '1');
       There.applySpeedoPos();
+      There.syncWindowShape();
       return;
     }
     $('.speedo').attr('data-active', on ? '1' : '0');
+    if (was != on) {
+      There.syncWindowShape();
+    }
   },
 
   // the gauge is draggable; its spot is kept as right/bottom offsets so it
@@ -935,6 +940,7 @@ There.init({
     }
     There.playSound('close menu');
     There.sendChat(`'${name}'`);
+    There.maybeAutoClose();
   },
 
   // emote grid by category, Favorites on top. one HTML string + delegated
@@ -2418,15 +2424,15 @@ There.init({
       // Shop / Auctions / Places open in the in-client browser (like Events and Dev),
       // near fullscreen with a margin, instead of the tiny native windows
       case 'shop': {
-        There.openUrl('https://webapps.prod.there.com/catalog/index.html');
+        There.togglePanel('shop');
         break;
       }
       case 'auctions': {
-        There.openUrl('https://webapps.prod.there.com/items/home');
+        There.togglePanel('auctions');
         break;
       }
       case 'places': {
-        There.openUrl('https://webapps.prod.there.com/places/places?count=100');
+        There.togglePanel('places');
         break;
       }
       case 'inventory': {
@@ -2513,7 +2519,7 @@ There.init({
     There.clearItemMenu();
     There.syncPanelWidth();
     $('.dockroot').attr('data-panel', id);
-    if (id == 'inventory' || id == 'wardrobe') {
+    if (id == 'inventory' || id == 'wardrobe' || id == 'places') {
       There.applyViewPrefs();
     }
     if (id == 'inventory') {
@@ -2531,6 +2537,14 @@ There.init({
       There.renderMusic();
     } else if (id == 'apps') {
       There.renderAppTray();
+    } else if (id == 'shop') {
+      There.loadShop(There.data.shopCat || '1000000001');
+    } else if (id == 'auctions') {
+      There.loadAuctionsHome();
+    } else if (id == 'places') {
+      $('.panel .paneltitle').text('Places');
+      $('.tabs').empty();
+      There.loadPlaces();
     } else if (id == 'scenes') {
       There.data.scenePicker = null;
       There.renderScenes();
@@ -2876,6 +2890,745 @@ There.init({
     There.fsCommand('browser', url);
   },
 
+  /* ------- Shop and Auctions panels -------
+   * The public webapps serve clean XML without a login (buying and bidding DO
+   * need one, those open the native browser where There Central handles it).
+   * The XML has no CORS headers, so reads go through FlashProxy's
+   * /tmui-webapps/ bridge, which is same origin for this page. */
+
+  WEBAPPS_MEDIA: 'https://webapps.prod.there.com/catalog/media/',
+
+  webappsFetch: function(path, cb) {
+    const host = There.data.host || There.variables.there_resourceshost || '127.0.0.1:9999';
+    $.ajax({
+      url: `http://${host}/tmui-webapps/${path}`,
+      dataType: 'xml',
+      timeout: 15000,
+      success: function(xml) {
+        cb(xml);
+      },
+      error: function() {
+        cb(null);
+      },
+    });
+  },
+
+  // the _small thumbnails blur when blown up to tile size: use the large art,
+  // fall back to the small file if a large one doesn't exist
+  webappsImg: function(el, small, large) {
+    const big = large || (small ? small.replace(/_small(\.[a-z]+)$/i, '$1') : '');
+    let img = $('<img>').attr('loading', 'lazy').attr('decoding', 'async');
+    if (big && big != small) {
+      $(img).on('error', function() {
+        $(this).off('error');
+        if (small) {
+          $(this).attr('src', There.WEBAPPS_MEDIA + small);
+        }
+      }).attr('src', There.WEBAPPS_MEDIA + big);
+    } else if (small) {
+      $(img).attr('src', There.WEBAPPS_MEDIA + small);
+    } else {
+      return;
+    }
+    $(img).appendTo($(el));
+  },
+
+  xmlText: function(node, tag) {
+    try {
+      return node.getElementsByTagName(tag)[0]?.textContent || '';
+    } catch (error) {
+      return '';
+    }
+  },
+
+  /* ------- shop ------- */
+
+  loadShop: function(cat) {
+    There.data.shopCat = cat;
+    $('.shopbody').html('<div class="empty">Loading\u2026</div>');
+    There.webappsFetch(`catalog/product?category=${encodeURIComponent(cat)}`, function(xml) {
+      if (There.data.panel != 'shop') {
+        return;
+      }
+      if (!xml) {
+        $('.shopbody').html('<div class="empty">The shop did not answer. Try again in a moment.</div>');
+        return;
+      }
+      There.renderShop(xml);
+    });
+  },
+
+  renderShop: function(xml) {
+    const crumbs = $('.shopcrumbs');
+    const body = $('.shopbody');
+    $(crumbs).empty();
+    $(body).empty();
+    const here = There.xmlText(xml, 'HierName') || 'Shop';
+    const catId = There.xmlText(xml, 'CategoryHier');
+    const crumb = function(name, cat, isHere) {
+      let el = $('<span class="crumb"></span>').text(name);
+      if (isHere) {
+        $(el).attr('data-here', '1');
+        $(crumbs).append(el);
+        return;
+      }
+      $(el).on('click', function() {
+        There.playSound('control down');
+        There.loadShop(cat);
+      });
+      $(crumbs).append(el, $('<span></span>').text('\u203A'));
+    };
+    if (catId != '1000000001') {
+      crumb('Shop', '1000000001', false);
+    }
+    for (const anc of xml.getElementsByTagName('Ancestors')[0]?.getElementsByTagName('Category') || []) {
+      const hid = There.xmlText(anc, 'Hid');
+      if (hid && hid != '1000000001') {
+        crumb(There.xmlText(anc, 'HierName'), hid, false);
+      }
+    }
+    crumb(here, catId, true);
+
+    // mid level tiles with pictures and price ranges
+    let shown = 0;
+    for (const di of xml.getElementsByTagName('DisplayItem')) {
+      const name = There.xmlText(di, 'HierName');
+      const hid = There.xmlText(di, 'Hid');
+      const img = There.xmlText(di, 'Image');
+      const price = There.xmlText(di, 'Text2');
+      let tile = $('<div class="shoptile"></div>').attr('title', There.xmlText(di, 'Text1') || name);
+      if (img) {
+        let tim = $('<div class="scimg"></div>');
+        There.webappsImg(tim, img);
+        $(tim).appendTo($(tile));
+        $(tile).attr('data-pic', '1');
+      }
+      let tfoot = $('<div class="scfoot"></div>');
+      $('<div class="scname"></div>').text(name).appendTo($(tfoot));
+      if (price) {
+        $('<div class="scprice"></div>').text(price + 'T').appendTo($(tfoot));
+      }
+      $(tfoot).appendTo($(tile));
+      (function(h) {
+        $(tile).on('click', function() {
+          There.playSound('control down');
+          There.loadShop(h);
+        });
+      })(hid);
+      $(tile).appendTo($(body));
+      shown++;
+    }
+    // plain subcategory tiles (root level)
+    if (!shown) {
+      for (const sc of xml.getElementsByTagName('SubCategories')[0]?.getElementsByTagName('Category') || []) {
+        const name = There.xmlText(sc, 'HierName');
+        const m = (There.xmlText(sc, 'Url') || '').match(/category=(\d+)/);
+        if (!m) {
+          continue;
+        }
+        let tile = $('<div class="shoptile"></div>');
+        $('<div></div>').text(name).appendTo($(tile));
+        (function(h) {
+          $(tile).on('click', function() {
+            There.playSound('control down');
+            There.loadShop(h);
+          });
+        })(m[1]);
+        $(tile).appendTo($(body));
+        shown++;
+      }
+    }
+    // leaf products: picture, name, price. clicking opens our item page
+    for (const pr of xml.getElementsByTagName('Product')) {
+      const product = {
+        name: There.xmlText(pr, 'ShortName') || There.xmlText(pr, 'LongName'),
+        pid: There.xmlText(pr, 'ProductId'),
+        price: There.xmlText(pr, 'Price'),
+        img: There.xmlText(pr, 'SmallImageUrl'),
+        large: There.xmlText(pr, 'LargeImageUrl'),
+        short: There.xmlText(pr, 'ShortDescription'),
+        long: There.xmlText(pr, 'LongDescription'),
+        canTry: !!There.xmlText(pr, 'TryUrl'),
+      };
+      let card = $('<div class="shopcard"></div>').attr('title', product.name);
+      let im = $('<div class="scimg"></div>');
+      There.webappsImg(im, product.img, product.large);
+      $(im).appendTo($(card));
+      let foot = $('<div class="scfoot"></div>');
+      $('<div class="scname"></div>').text(product.name).appendTo($(foot));
+      $('<div class="scprice"></div>').html(`${tmuiIcon('coins')}${product.price}T`).appendTo($(foot));
+      $(foot).appendTo($(card));
+      (function(p) {
+        $(card).on('click', function() {
+          There.playSound('control down');
+          There.showShopDetail(p);
+        });
+      })(product);
+      $(card).appendTo($(body));
+      shown++;
+    }
+    if (!shown) {
+      $(body).html('<div class="empty">Nothing in this category.</div>');
+    }
+    There.applyGridScale();
+  },
+
+  // our own item page: big picture, the full description, Buy and Try. the
+  // There Central page stays one click away for everything else
+  showShopDetail: function(p) {
+    const body = $('.shopbody');
+    $(body).empty();
+    let d = $('<div class="itemdetail"></div>');
+    $('<div class="idback"></div>').text('\u2039 Back').on('click', function() {
+      There.playSound('control down');
+      There.loadShop(There.data.shopCat || '1000000001');
+    }).appendTo($(d));
+    let top = $('<div class="idtop"></div>');
+    let im = $('<div class="idimg"></div>');
+    if (p.large || p.img) {
+      $('<img>').attr('src', There.WEBAPPS_MEDIA + (p.large || p.img)).appendTo($(im));
+    }
+    $(im).appendTo($(top));
+    let info = $('<div class="idinfo"></div>');
+    $('<div class="idname"></div>').text(p.name || 'Item ' + p.pid).appendTo($(info));
+    $('<div class="idprice"></div>').html(`${tmuiIcon('coins')}${p.price}T`).appendTo($(info));
+    if (p.short) {
+      $('<div class="idmeta"></div>').append($('<span class="mv"></span>').text(p.short)).appendTo($(info));
+    }
+    $(info).appendTo($(top));
+    $(top).appendTo($(d));
+    if (p.long) {
+      $('<div class="iddesc"></div>').text(p.long.replace(/^"|"$/g, '')).appendTo($(d));
+    }
+    let btns = $('<div class="idbtns"></div>');
+    $('<div class="button"></div>').attr('data-primary', '1').text('Buy').on('click', function() {
+      There.playSound('menu item activate');
+      There.openUrl(`https://webapps.prod.there.com/catalog/product?confirm=${p.pid}`);
+    }).appendTo($(btns));
+    if (p.canTry) {
+      $('<div class="button"></div>').text('Try').on('click', function() {
+        There.playSound('menu item activate');
+        There.openUrl(`https://webapps.prod.there.com/catalog/product?try=${p.pid}`);
+      }).appendTo($(btns));
+    }
+    $('<span class="idlink"></span>').text('View on There Central').on('click', function() {
+      There.openUrl(`https://webapps.prod.there.com/catalog/product?id=${p.pid}`);
+    }).appendTo($(btns));
+    $(btns).appendTo($(d));
+    $(d).appendTo($(body));
+  },
+
+  // card size slider and tile/list view, shared by both panels
+  applyGridScale: function() {
+    const px = There.prefs().shopScale || 150;
+    const view = There.prefs().shopView || 'tile';
+    $('.shopbody, .aubody').css('--shopw', px + 'px').attr('data-view', view);
+    $('.gridscale').val(px);
+    $('.shopviewtoggle .vbtn').attr('data-active', '0');
+    $(`.shopviewtoggle .vbtn[data-view="${view}"]`).attr('data-active', '1');
+  },
+
+  /* ------- auctions ------- */
+
+  loadAuctionsHome: function() {
+    There.data.auBack = There.loadAuctionsHome;
+    $('.aucrumbs').empty();
+    $('.aubody').html('<div class="empty">Loading\u2026</div>');
+    There.webappsFetch('items/home', function(xml) {
+      if (There.data.panel != 'auctions') {
+        return;
+      }
+      if (!xml) {
+        $('.aubody').html('<div class="empty">Auctions did not answer. Try again in a moment.</div>');
+        return;
+      }
+      // category dropdown (ours, native selects die in the HUD), once
+      if (!There.data.aucats) {
+        const cats = [];
+        const root = xml.getElementsByTagName('Categories')[0];
+        for (const c of root ? root.getElementsByTagName('Category') : []) {
+          const id = There.xmlText(c, 'CategoryId');
+          const name = There.xmlText(c, 'Name');
+          if (id && name) {
+            cats.push({ id: id, name: name });
+          }
+        }
+        There.data.aucats = cats;
+        const list = $('.aucatlist');
+        $(list).empty();
+        const opt = function(id, name) {
+          $('<div class="opt"></div>').text(name).on('click', function(event) {
+            event.stopPropagation();
+            There.playSound('control down');
+            There.pickAuctionCat(id, name);
+          }).appendTo($(list));
+        };
+        opt('', 'All categories');
+        for (const c of cats) {
+          opt(c.id, c.name);
+        }
+      }
+      const body = $('.aubody');
+      $(body).empty();
+      // featured auctions ride a sliding 3-up carousel
+      const feat = xml.getElementsByTagName('FeaturedAuctions')[0];
+      const featList = feat ? Array.from(feat.getElementsByTagName('Listing')) : [];
+      if (featList.length) {
+        $('<div class="ausection"></div>').html('<span class="austar">\u2605</span> Featured').appendTo($(body));
+        let car = $('<div class="aucarousel"></div>');
+        let track = $('<div class="autrack"></div>');
+        for (const li of featList.slice(0, 12)) {
+          There.renderAuctionCard(track, li, true);
+        }
+        $(track).appendTo($(car));
+        $('<div class="aunav auprev"></div>').text('\u2039').on('click', function(event) {
+          event.stopPropagation();
+          There.playSound('control down');
+          There.auSlideTo((There.data.auSlide || 0) - 1);
+          There.setNamedTimer('aucarousel', 5000, There.auAutoSlide);
+        }).appendTo($(car));
+        $('<div class="aunav aunext"></div>').text('\u203A').on('click', function(event) {
+          event.stopPropagation();
+          There.playSound('control down');
+          There.auSlideTo((There.data.auSlide || 0) + 1);
+          There.setNamedTimer('aucarousel', 5000, There.auAutoSlide);
+        }).appendTo($(car));
+        // breathe while hovered
+        $(car).on('mouseenter', function() {
+          There.clearNamedTimer('aucarousel');
+        }).on('mouseleave', function() {
+          There.setNamedTimer('aucarousel', 4000, There.auAutoSlide);
+        });
+        $(car).appendTo($(body));
+        There.data.auSlide = 0;
+        There.setNamedTimer('aucarousel', 4000, There.auAutoSlide);
+      }
+      // "designer picks" in the feed are DESIGNERS, not auctions: name chips
+      // that open everything that designer has listed
+      const picks = xml.getElementsByTagName('DesignerFeaturedAuctions')[0];
+      const designers = [];
+      for (const li of picks ? picks.getElementsByTagName('Listing') : []) {
+        const name = There.xmlText(li, 'ArtKitDesignerName');
+        if (name && !designers.includes(name)) {
+          designers.push(name);
+        }
+      }
+      if (designers.length) {
+        $('<div class="ausection"></div>').html('<span class="austar">\u2605</span> Featured designers').appendTo($(body));
+        let wrap = $('<div class="auchips"></div>');
+        for (const name of designers) {
+          (function(n) {
+            $('<div class="auchip"></div>').text(n).on('click', function() {
+              There.playSound('control down');
+              There.loadDesigner(n);
+            }).appendTo($(wrap));
+          })(name);
+        }
+        $(wrap).appendTo($(body));
+      }
+      if ($(body).children().length == 0) {
+        $(body).html('<div class="empty">No featured auctions right now. Browse a category or search.</div>');
+      }
+      There.applyGridScale();
+    });
+  },
+
+  // featured carousel: slide the window, wrapping at the ends
+  auSlideTo: function(i) {
+    const track = $('.aucarousel .autrack')[0];
+    if (!track || !track.children.length) {
+      return;
+    }
+    const max = Math.max(0, track.children.length - 3);
+    if (i < 0) {
+      i = max;
+    }
+    if (i > max) {
+      i = 0;
+    }
+    There.data.auSlide = i;
+    const step = track.children[0].getBoundingClientRect().width + 8;
+    track.style.transform = `translateX(${-i * step}px)`;
+  },
+
+  auAutoSlide: function() {
+    if (There.data.panel == 'auctions' && $('.aucarousel').length) {
+      There.auSlideTo((There.data.auSlide || 0) + 1);
+      There.setNamedTimer('aucarousel', 4000, There.auAutoSlide);
+    }
+  },
+
+  // category drill-down via /items/browse: subcategory tiles, crumbs, listings
+  loadAuctionsBrowse: function(cat) {
+    There.data.auBack = function() {
+      There.loadAuctionsBrowse(cat);
+    };
+    $('.aubody').html('<div class="empty">Loading\u2026</div>');
+    let browseQ = `items/browse?ProductHierarchyId=${encodeURIComponent(cat)}&PageSize=30&Page=1`;
+    if (There.data.ausortParam) {
+      browseQ += `&${There.data.ausortParam}`;
+    }
+    There.webappsFetch(browseQ, function(xml) {
+      if (There.data.panel != 'auctions') {
+        return;
+      }
+      const crumbs = $('.aucrumbs');
+      const body = $('.aubody');
+      $(crumbs).empty();
+      $(body).empty();
+      if (!xml) {
+        $(body).html('<div class="empty">Auctions did not answer. Try again in a moment.</div>');
+        return;
+      }
+      // crumbs: All > ancestors (the current category is the last ancestor)
+      $('<span class="crumb"></span>').text('All').on('click', function() {
+        There.playSound('control down');
+        There.pickAuctionCat('', '');
+      }).appendTo($(crumbs));
+      const ancestors = Array.from(xml.getElementsByTagName('Ancestors')[0]?.getElementsByTagName('Category') || []);
+      ancestors.forEach(function(anc, i) {
+        $('<span></span>').text('\u203A').appendTo($(crumbs));
+        const hid = There.xmlText(anc, 'Hid');
+        let el = $('<span class="crumb"></span>').text(There.xmlText(anc, 'HierName'));
+        if (i == ancestors.length - 1) {
+          $(el).attr('data-here', '1');
+        } else {
+          $(el).on('click', function() {
+            There.playSound('control down');
+            There.loadAuctionsBrowse(hid);
+          });
+        }
+        $(el).appendTo($(crumbs));
+      });
+      // subcategories as tiles
+      const schema = xml.getElementsByTagName('SubCategories')[0];
+      for (const sc of schema ? schema.getElementsByTagName('Category') : []) {
+        const id = There.xmlText(sc, 'Id');
+        const name = There.xmlText(sc, 'Name');
+        if (!id) {
+          continue;
+        }
+        let tile = $('<div class="shoptile"></div>');
+        $('<div></div>').text(name).appendTo($(tile));
+        (function(h) {
+          $(tile).on('click', function() {
+            There.playSound('control down');
+            There.loadAuctionsBrowse(h);
+          });
+        })(id);
+        $(tile).appendTo($(body));
+      }
+      const listings = xml.getElementsByTagName('Listing');
+      if (listings.length) {
+        $('<div class="ausection"></div>').text('Auctions').appendTo($(body));
+        for (const li of listings) {
+          There.renderAuctionCard(body, li);
+        }
+      }
+      if ($(body).children().length == 0) {
+        $(body).html('<div class="empty">Nothing here right now.</div>');
+      }
+      There.applyGridScale();
+    });
+  },
+
+  // sort keys straight from the auction site's own column headers
+  AUCTION_SORTS: [
+    { label: 'Price low to high', param: 'SortAscNum=CurrentPrice' },
+    { label: 'Price high to low', param: 'SortDescNum=CurrentPrice' },
+    { label: 'Name A to Z', param: 'SortAsc=LongName' },
+    { label: 'Name Z to A', param: 'SortDesc=LongName' },
+    { label: 'Ending soonest', param: 'SortAscDate=EndTime' },
+    { label: 'Newest listings', param: 'SortDescNum=ItemId' },
+    { label: 'Designer A to Z', param: 'SortAsc=ArtKitDesignerName' },
+  ],
+
+  pickAuctionSort: function(param, label) {
+    There.data.ausortParam = param;
+    $('.ausort .ausortlabel').text(param ? label : 'Sort…');
+    $('.ausortlist, .aucatlist').attr('data-open', '0');
+    $('.ausort, .aucat').attr('data-open', '0');
+    if ($('.aucontrols .ausearch').val().trim()) {
+      There.searchAuctions();
+    } else if (There.data.aucatSel) {
+      There.loadAuctionsBrowse(There.data.aucatSel);
+    } else if (param) {
+      // no category picked: sort across everything via the root category
+      There.loadAuctionsBrowse('1000000001');
+    } else {
+      There.loadAuctionsHome();
+    }
+  },
+
+  pickAuctionCat: function(id, name) {
+    There.data.aucatSel = id;
+    $('.aucat .aucatlabel').text(id ? name : 'Browse…');
+    $('.aucatlist').attr('data-open', '0');
+    $('.aucat').attr('data-open', '0');
+    if ($('.aucontrols .ausearch').val().trim()) {
+      There.searchAuctions();
+    } else if (id) {
+      There.loadAuctionsBrowse(id);
+    } else {
+      There.loadAuctionsHome();
+    }
+  },
+
+  loadDesigner: function(name) {
+    There.data.auBack = function() {
+      There.loadDesigner(name);
+    };
+    const crumbs = $('.aucrumbs');
+    $(crumbs).empty();
+    $('<span class="crumb"></span>').text('All').on('click', function() {
+      There.playSound('control down');
+      There.pickAuctionCat('', '');
+    }).appendTo($(crumbs));
+    $('<span></span>').text('\u203A').appendTo($(crumbs));
+    $('<span class="crumb" data-here="1"></span>').text(`Designer: ${name}`).appendTo($(crumbs));
+    $('.aubody').html('<div class="empty">Loading\u2026</div>');
+    let q = `items/designersearch?ArtKitDesignerName=${encodeURIComponent(name)}` +
+      '&ProductHierarchyId=1000000001&DesignerOnly=yes&PageSize=30&Page=1';
+    q += `&${There.data.ausortParam || 'SortDescNum=ItemId'}`;
+    There.webappsFetch(q, function(xml) {
+      if (There.data.panel != 'auctions') {
+        return;
+      }
+      const body = $('.aubody');
+      $(body).empty();
+      const listings = xml ? xml.getElementsByTagName('Listing') : [];
+      for (const li of listings) {
+        There.renderAuctionCard(body, li);
+      }
+      if (!listings.length) {
+        $(body).html('<div class="empty">Nothing listed by this designer right now.</div>');
+      }
+      There.applyGridScale();
+    });
+  },
+
+  renderAuctionCard: function(body, li, feat) {
+    const id = There.xmlText(li, 'ItemId') || There.xmlText(li, 'Id');
+    const name = There.xmlText(li, 'LongName') || 'Auction ' + id;
+    const img = There.xmlText(li, 'SmallImageUrl');
+    const imgLarge = There.xmlText(li, 'LargeImageUrl');
+    const price = There.xmlText(li, 'CurrentPrice');
+    const bids = There.xmlText(li, 'BidCount');
+    let card = $('<div class="aucard"></div>');
+    if (feat) {
+      $(card).attr('data-feat', '1');
+    }
+    $(card).attr('title', name);
+    let im = $('<div class="scimg"></div>');
+    There.webappsImg(im, img, imgLarge);
+    $(im).appendTo($(card));
+    let foot = $('<div class="scfoot"></div>');
+    $('<div class="scname"></div>').text(name).appendTo($(foot));
+    if (price) {
+      $('<div class="scprice"></div>').html(`${tmuiIcon('coins')}${price}T` + (bids ? ` \u00B7 ${bids} bid${bids == '1' ? '' : 's'}` : '')).appendTo($(foot));
+    }
+    $(foot).appendTo($(card));
+    (function(itemId) {
+      $(card).on('click', function() {
+        There.playSound('control down');
+        There.showAuctionDetail(itemId);
+      });
+    })(id);
+    $(card).appendTo($(body));
+  },
+
+  // our own auction page from /items/view: picture, price, seller, time left
+  showAuctionDetail: function(itemId) {
+    const body = $('.aubody');
+    $(body).html('<div class="empty">Loading\u2026</div>');
+    There.webappsFetch(`items/view?ItemId=${encodeURIComponent(itemId)}`, function(xml) {
+      if (There.data.panel != 'auctions') {
+        return;
+      }
+      $(body).empty();
+      if (!xml) {
+        $(body).html('<div class="empty">That auction did not load. Try again in a moment.</div>');
+        return;
+      }
+      let d = $('<div class="itemdetail"></div>');
+      $('<div class="idback"></div>').text('\u2039 Back').on('click', function() {
+        There.playSound('control down');
+        (There.data.auBack || There.loadAuctionsHome)();
+      }).appendTo($(d));
+      let top = $('<div class="idtop"></div>');
+      const img = There.xmlText(xml, 'LargeImageUrl') || There.xmlText(xml, 'SmallImageUrl');
+      let im = $('<div class="idimg"></div>');
+      if (img) {
+        $('<img>').attr('src', There.WEBAPPS_MEDIA + img).appendTo($(im));
+      }
+      $(im).appendTo($(top));
+      let info = $('<div class="idinfo"></div>');
+      const name = There.xmlText(xml, 'LongName') || There.xmlText(xml, 'ShortName') || 'Auction ' + itemId;
+      $('<div class="idname"></div>').text(name).appendTo($(info));
+      const price = There.xmlText(xml, 'CurrentPrice');
+      const bids = There.xmlText(xml, 'BidCount');
+      if (price) {
+        $('<div class="idprice"></div>').html(`${tmuiIcon('coins')}${price}T` + (bids ? ` \u00B7 ${bids} bid${bids == '1' ? '' : 's'}` : '')).appendTo($(info));
+      }
+      const meta = [];
+      const designer = There.xmlText(xml, 'ArtKitDesignerName');
+      const designerDoid = There.xmlText(xml, 'ArtKitDesigner');
+      const seller = There.xmlText(xml, 'SellerName');
+      const sellerDoid = There.xmlText(xml, 'Seller');
+      const ends = There.xmlText(xml, 'EndTime');
+      const qty = There.xmlText(xml, 'Quantity');
+      if (designer) {
+        meta.push(['Designer', designer, designerDoid]);
+      }
+      if (seller) {
+        meta.push(['Seller', seller, sellerDoid]);
+      }
+      if (qty && qty != '0' && qty != '1') {
+        meta.push(['Quantity', qty]);
+      }
+      if (ends) {
+        meta.push(['Ends', ends]);
+      }
+      if (meta.length) {
+        let grid = $('<div class="idmeta"></div>');
+        for (const m of meta) {
+          $('<span class="ml"></span>').text(m[0]).appendTo($(grid));
+          let mv = $('<span class="mv"></span>');
+          if (m[2]) {
+            // names open the avatar's There profile, same page the site links
+            (function(doid) {
+              $('<span class="idlink"></span>').text(m[1]).on('click', function() {
+                There.openUrl(`https://webapps.prod.there.com/profiles/profiles?AvatarDoid=${doid}&Mode=OutThere&op=view`);
+              }).appendTo($(mv));
+            })(m[2]);
+          } else {
+            $(mv).text(m[1]);
+          }
+          $(mv).appendTo($(grid));
+        }
+        $(grid).appendTo($(info));
+      }
+      $(info).appendTo($(top));
+      $(top).appendTo($(d));
+      const desc = There.xmlText(xml, 'LongDescription');
+      const extra = There.xmlText(xml, 'ExtraDescription');
+      if (desc) {
+        $('<div class="iddesc"></div>').text(desc).appendTo($(d));
+      }
+      if (extra && extra != desc) {
+        $('<div class="iddesc"></div>').text(extra).appendTo($(d));
+      }
+      let btns = $('<div class="idbtns"></div>');
+      $('<div class="button"></div>').attr('data-primary', '1').text('Bid / Buy').on('click', function() {
+        There.playSound('menu item activate');
+        There.openUrl(`https://webapps.prod.there.com/items/view?ItemId=${itemId}`);
+      }).appendTo($(btns));
+      $('<span class="idlink"></span>').text('View on There Central').on('click', function() {
+        There.openUrl(`https://webapps.prod.there.com/items/view?ItemId=${itemId}`);
+      }).appendTo($(btns));
+      $(btns).appendTo($(d));
+      $(d).appendTo($(body));
+    });
+  },
+
+  searchAuctions: function() {
+    const text = $('.aucontrols .ausearch').val().trim();
+    const cat = There.data.aucatSel || '';
+    if (!text) {
+      if (cat) {
+        There.loadAuctionsBrowse(cat);
+      } else {
+        There.loadAuctionsHome();
+      }
+      return;
+    }
+    There.data.auBack = There.searchAuctions;
+    $('.aucrumbs').empty();
+    $('.aubody').html('<div class="empty">Searching\u2026</div>');
+    let q = `items/fulltextsearch?Fulltext=${encodeURIComponent(text)}&PageSize=30&Page=1`;
+    if (cat) {
+      q += `&ProductHierarchyId=${encodeURIComponent(cat)}`;
+    }
+    if (There.data.ausortParam) {
+      q += `&${There.data.ausortParam}`;
+    }
+    There.webappsFetch(q, function(xml) {
+      if (There.data.panel != 'auctions') {
+        return;
+      }
+      const body = $('.aubody');
+      $(body).empty();
+      const listings = xml ? xml.getElementsByTagName('Listing') : [];
+      for (const li of listings) {
+        There.renderAuctionCard(body, li);
+      }
+      if (!listings.length) {
+        $(body).html('<div class="empty">No auctions match.</div>');
+      }
+      There.applyGridScale();
+    });
+  },
+
+  /* ------- Places panel -------
+   * The native Places > Go To Favorite menu holds the player's bookmarks,
+   * with their folders from Organize. Walk it on open (it's tiny), click =
+   * the entry's own activate node, which is a native teleport. */
+
+  PLACES_MENU: '/mainMenu/Places/Go To Favorite',
+
+  // flatten the native favorites (their Organize folders are ignored, our own
+  // folder system does the organizing) into panel items
+  loadPlaces: function() {
+    There.renderFolderView();
+    There.menuKids(There.PLACES_MENU, function(names) {
+      const items = [];
+      const finish = function() {
+        items.sort((x, y) => x.name.localeCompare(y.name));
+        There.data.places = items;
+        if (There.data.panel == 'places') {
+          There.renderWhenFree();
+        }
+      };
+      if (names == null || !names.length) {
+        finish();
+        return;
+      }
+      const step = function(i) {
+        if (i >= names.length) {
+          finish();
+          return;
+        }
+        There.menuKids(`${There.PLACES_MENU}/${names[i]}`, function(kids) {
+          if (kids && kids.length) {
+            for (const k of kids) {
+              items.push({ name: k, suffix: `${names[i]}/${k}`, place: true, glyph: '📍' });
+            }
+          } else {
+            items.push({ name: names[i], suffix: names[i], place: true, glyph: '📍' });
+          }
+          There.setNamedTimer('places-walk', 40, function() {
+            step(i + 1);
+          });
+        });
+      };
+      step(0);
+    });
+  },
+
+  teleportToFavorite: function(suffix) {
+    There.playSound('menu item activate');
+    // Action Mode hides the game UI and its menus read dead, peek while invoking
+    There.withUiPeek(function(done) {
+      There.fetch({
+        path: '/ScriptHook/Invoke',
+        query: { Path: `${There.PLACES_MENU}/${suffix}/activate` },
+        dataType: 'xml',
+        complete: done,
+      });
+    });
+    There.closePanel();
+  },
+
   /* ------- custom item folders (nested, per scope, per avatar) -------
    * All local, in localStorage. Keyed by avatar (pilotDoid) so accounts never
    * share folders, and by scope:
@@ -2884,9 +3637,14 @@ There.init({
    * Items referenced by doid (possessions) or poid (clothing). Nesting via a
    * `parent` link, null = scope root. Nothing leaves the machine. */
 
-  // stable id for an item within its scope
+  // stable id for an item within its scope (places go by their menu path)
   itemKey: function(item) {
-    return String(item.doid || item.poid || '');
+    return String(item.doid || item.poid || item.suffix || '');
+  },
+
+  // panels that share the custom folder system
+  folderPanelOpen: function() {
+    return ['inventory', 'wardrobe', 'places'].includes(There.data.panel);
   },
 
   // folder scope for the active panel. wardrobe is per category so "Summer"
@@ -2894,6 +3652,9 @@ There.init({
   currentScope: function() {
     if (There.data.panel == 'wardrobe') {
       return 'wardrobe:' + (There.data.wardrobeTab || 'all');
+    }
+    if (There.data.panel == 'places') {
+      return 'places';
     }
     return 'inventory';
   },
@@ -3205,7 +3966,7 @@ There.init({
     There.setFoldersNote(note);
     There.playSound('menu item activate');
     // refresh an open panel so the restored folders show
-    if (There.data.panel == 'inventory' || There.data.panel == 'wardrobe') {
+    if (There.folderPanelOpen()) {
       There.renderFolderView();
     }
   },
@@ -3635,7 +4396,7 @@ There.init({
     // folder cards for this level (inventory + wardrobe). hidden while searching,
     // search covers the whole scope
     let folderCount = 0;
-    if (!search && (There.data.panel == 'inventory' || There.data.panel == 'wardrobe')) {
+    if (!search && There.folderPanelOpen()) {
       const subs = There.childFolders(There.currentFolderId());
       for (let folder of subs) {
         There.renderFolderCard(folder, grid);
@@ -3712,6 +4473,7 @@ There.init({
       $(card).on('click', function(event) {
         event.preventDefault();
         There.toggleWear(item);
+        There.maybeAutoClose();
       }).on('contextmenu', function(event) {
         event.preventDefault();
         There.showItemMenu(card, item, event);
@@ -3762,6 +4524,7 @@ There.init({
       event.preventDefault();
       if (There.data.panel == 'wardrobe' && item.poid && There.prefs().quickEquip) {
         There.toggleWear(item);
+        There.maybeAutoClose();
       } else {
         There.showItemMenu(card, item, event);
       }
@@ -3945,6 +4708,9 @@ There.init({
       // scenes are slotted by reference so edits carry over
       kind: item.kind || null,
       sceneId: item.sceneId || null,
+      // favorite places teleport from the bar
+      place: item.place || null,
+      suffix: item.suffix || null,
     };
     const slots = There.quickSlots();
     slots[index] = shortcut;
@@ -4076,6 +4842,11 @@ There.init({
     There.setNamedTimer('qpulse' + index, 320, function() {
       $('.qslot[data-index="' + index + '"]').removeClass('qpulse');
     });
+    // favorite place: teleport there
+    if (item.place && item.suffix) {
+      There.teleportToFavorite(item.suffix);
+      return;
+    }
     // scene: run the whole chain
     if (item.kind == 'scene') {
       There.playScene(item.sceneId);
@@ -4226,7 +4997,9 @@ There.init({
 
   itemActions: function(item) {
     let actions = [];
-    if (item.interactions) {
+    if (item.place) {
+      actions.push({ kind: 'teleport', label: 'Teleport' });
+    } else if (item.interactions) {
       if (!There.data.myThingsMap) {
         There.data.myThingsMap = There.loadMyThingsMap();
       }
@@ -4535,7 +5308,7 @@ There.init({
     There.data.menuItem = null;
     if (wasOpen && There.data.renderPending) {
       There.data.renderPending = false;
-      if (There.data.panel == 'inventory' || There.data.panel == 'wardrobe') {
+      if (There.folderPanelOpen()) {
         There.renderFolderView();
       }
     }
@@ -4692,8 +5465,22 @@ There.init({
     });
   },
 
+  // optional per-panel auto-close after an action (Settings > Controls)
+  maybeAutoClose: function() {
+    const p = There.prefs();
+    if ((There.data.panel == 'inventory' && p.closeInv) ||
+        (There.data.panel == 'wardrobe' && p.closeWard) ||
+        (There.data.panel == 'emotes' && p.closeEmotes)) {
+      There.closePanel();
+    }
+  },
+
   invokeItemAction: function(item, action) {
     There.playSound('close menu');
+    if (action.kind == 'teleport') {
+      There.teleportToFavorite(item.suffix);
+      return;
+    }
     if (action.kind == 'folder') {
       There.showMoveToFolder(item);
       return;
@@ -4726,6 +5513,7 @@ There.init({
           }
         });
       }
+      There.maybeAutoClose();
       return;
     }
     // Inventory: go through the item's node in the native My Things menu tree
@@ -4733,6 +5521,7 @@ There.init({
     //   /mainMenu/My Things/<folders...>/<Item Name>/<Action>/activate
     // Same native path the Organizer uses (InventoryManagerPossession::executeNthInteraction), checked in the logs.
     There.invokeInventoryMenuAction(item, action.label);
+    There.maybeAutoClose();
   },
 
   /* ------- inventory actions via the My Things menu tree -------
@@ -5399,6 +6188,9 @@ There.init({
     if (There.data.panel == 'inventory') {
       return There.data.inventory || [];
     }
+    if (There.data.panel == 'places') {
+      return There.data.places || [];
+    }
     if (There.data.panel == 'wardrobe') {
       const tab = There.wardrobeTabs.find(t => t.id == There.data.wardrobeTab) || There.wardrobeTabs[0];
       // outfits/looksets have their own pob cache, the rest filter accoutrements
@@ -5515,6 +6307,13 @@ There.init({
       prefs.gifs = raw.gifs !== false;
       // speedometer while driving: default on
       prefs.speedo = raw.speedo !== false;
+      // card size and view in the Shop and Auctions grids
+      prefs.shopScale = (raw.shopScale >= 110 && raw.shopScale <= 230) ? raw.shopScale : 150;
+      prefs.shopView = raw.shopView == 'list' ? 'list' : 'tile';
+      // close a panel right after using it: off unless asked for
+      prefs.closeInv = raw.closeInv === true;
+      prefs.closeWard = raw.closeWard === true;
+      prefs.closeEmotes = raw.closeEmotes === true;
       // the saved button order (Settings > Dock buttons)
       if (Array.isArray(raw.dockOrder)) {
         prefs.dockOrder = raw.dockOrder.filter(id => typeof id == 'string');
@@ -5568,6 +6367,12 @@ There.init({
     if (t && t.accent) {
       root.style.setProperty('--accent', t.accent);
       root.style.setProperty('--accent-bright', t.bright || t.accent);
+      // the WebView here is too old for color-mix(), glows and tints use this
+      const am = /^#?([0-9a-f]{6})$/i.exec(t.accent);
+      if (am) {
+        const an = parseInt(am[1], 16);
+        root.style.setProperty('--accent-rgb', `${an >> 16 & 255}, ${an >> 8 & 255}, ${an & 255}`);
+      }
       // full theme: pull the dark surfaces toward the accent too, so the pill,
       // panels, menus and tooltips all match instead of staying plain slate
       const tint = mix([17, 21, 28], 0.16, t.accent);
@@ -5579,6 +6384,7 @@ There.init({
     } else {
       root.style.removeProperty('--accent');
       root.style.removeProperty('--accent-bright');
+      root.style.removeProperty('--accent-rgb');
       root.style.removeProperty('--tint');
       root.style.removeProperty('--tint-deep');
       root.style.removeProperty('--tint-raised');
@@ -5719,7 +6525,7 @@ There.init({
     const dock = There.prefs().dock || {};
     const host = $('.docktoggles');
     $(host).empty();
-    $('.appeartoggles, .controltoggles, .giftoggles').empty();
+    $('.appeartoggles, .controltoggles, .behaviortoggles, .giftoggles').empty();
     // dock-wide switches (Appearance / Controls), then a row per dock button
     const prefRow = function(label, key, target) {
       let row = $('<div class="dtrow"></div>');
@@ -5741,8 +6547,11 @@ There.init({
     prefRow('Compact dock', 'compact', '.appeartoggles');
     prefRow('Compass', 'showCompass', '.appeartoggles');
     prefRow('Tbux balance', 'showTbux', '.appeartoggles');
-    prefRow('Speedometer when driving', 'speedo', '.appeartoggles');
     prefRow('Action Mode keys (WASD, Space, R)', 'keymap', '.controltoggles');
+    prefRow('Speedometer when driving', 'speedo', '.behaviortoggles');
+    prefRow('Close Inventory after an action', 'closeInv', '.behaviortoggles');
+    prefRow('Close Wardrobe after an action', 'closeWard', '.behaviortoggles');
+    prefRow('Close Emotes after sending one', 'closeEmotes', '.behaviortoggles');
     prefRow('Show GIFs from other ModernUI users', 'gifs', '.giftoggles');
     // rows follow the dock order, split under the same section headings as the
     // pill itself; the arrows move a button inside its section only
@@ -5813,7 +6622,7 @@ There.init({
     There.applyViewPrefs();
     There.playSound('control down');
     // list and tile use different thumbs (icon vs catalog), so re-render
-    if (There.data.panel == 'inventory' || There.data.panel == 'wardrobe') {
+    if (There.folderPanelOpen()) {
       There.renderCards(There.itemsAtCurrentLevel());
     }
   },
@@ -5828,7 +6637,8 @@ There.init({
 
   // footer "N items" count
   setFooterCount: function(n) {
-    $('.footcount').text(n + (n == 1 ? ' item' : ' items'));
+    const noun = There.data.panel == 'places' ? ' place' : ' item';
+    $('.footcount').text(n + noun + (n == 1 ? '' : 's'));
     let missing = 0;
     if (There.data.panel == 'inventory') {
       missing = (There.data.inventory || []).filter(i => There.itemNeedsPhoto(i)).length;
@@ -6459,6 +7269,116 @@ $(document).ready(function() {
   });
   $('.scenespanel').on('mousedown', function(event) {
     event.stopPropagation();
+  });
+  // Places: bookmark here (native Add Favorite dialog), undo teleport, Central
+  $('.button.placemark').on('click', function() {
+    There.playSound('control down');
+    There.fetch({
+      path: '/ScriptHook/Invoke',
+      query: { Path: '/mainMenu/Places/Add Favorite.../activate' },
+      dataType: 'xml',
+    });
+    There.closePanel();
+  });
+  $('.button.placeundo').on('click', function() {
+    There.playSound('control down');
+    There.fetch({
+      path: '/ScriptHook/Invoke',
+      query: { Path: '/mainMenu/Places/Undo Last Teleport/activate' },
+      dataType: 'xml',
+    });
+  });
+  $('.button.placedel').on('click', function() {
+    There.playSound('control down');
+    There.fetch({
+      path: '/ScriptHook/Invoke',
+      query: { Path: '/mainMenu/Places/Organize.../activate' },
+      dataType: 'xml',
+    });
+    There.closePanel();
+  });
+  // Shop / Auctions panels
+  $('.shoppanel, .auctionspanel').on('mousedown', function(event) {
+    event.stopPropagation();
+  });
+  $('.button.shopcentral').on('click', function() {
+    There.openUrl('https://webapps.prod.there.com/catalog/index.html');
+  });
+  $('.button.aucentral').on('click', function() {
+    There.openUrl('https://webapps.prod.there.com/items/home');
+  });
+  $('.aucontrols .ausearch').on('click', function() {
+    if (!$(this).is(':focus')) {
+      There.fsCommand('getKeyboardFocus');
+      $(this).focus();
+    }
+  }).on('keydown', function(event) {
+    event.stopPropagation();
+    if (event.key == 'Enter') {
+      There.searchAuctions();
+    }
+  });
+  $('.aucontrols .aucat').on('mousedown', function(event) {
+    event.stopPropagation();
+  }).on('click', function(event) {
+    event.stopPropagation();
+    There.playSound('control down');
+    const open = $('.aucatlist').attr('data-open') == '1' ? '0' : '1';
+    $('.ausortlist').attr('data-open', '0');
+    $('.aucatlist').attr('data-open', open);
+    $('.aucat').attr('data-open', open);
+  });
+  $('.aucatlist, .ausortlist').on('mousedown', function(event) {
+    event.stopPropagation();
+  });
+  // the sort dropdown, filled once from the static list
+  (function() {
+    const list = $('.ausortlist');
+    const opt = function(param, label) {
+      $('<div class="opt"></div>').text(label).on('click', function(event) {
+        event.stopPropagation();
+        There.playSound('control down');
+        There.pickAuctionSort(param, label);
+      }).appendTo($(list));
+    };
+    opt('', 'Default order');
+    for (const so of There.AUCTION_SORTS) {
+      opt(so.param, so.label);
+    }
+  })();
+  $('.ausort').on('mousedown', function(event) {
+    event.stopPropagation();
+  }).on('click', function(event) {
+    event.stopPropagation();
+    There.playSound('control down');
+    const open = $('.ausortlist').attr('data-open') == '1' ? '0' : '1';
+    $('.aucatlist').attr('data-open', '0');
+    $('.ausortlist').attr('data-open', open);
+    $('.ausort').attr('data-open', open);
+  });
+  // clicking anywhere else closes the lists
+  $(document).on('mousedown', function() {
+    $('.aucatlist, .ausortlist').attr('data-open', '0');
+    $('.aucat, .ausort').attr('data-open', '0');
+  });
+  $('.shopviewtoggle .vbtn').on('click', function() {
+    There.playSound('control down');
+    There.prefs().shopView = $(this).attr('data-view') == 'list' ? 'list' : 'tile';
+    There.savePrefs();
+    There.applyGridScale();
+  }).on('mousedown', function(event) {
+    event.stopPropagation();
+  });
+  $('.gridscale').on('input change', function() {
+    There.prefs().shopScale = Math.max(110, Math.min(230, Number($(this).val()) || 150));
+    There.savePrefs();
+    There.applyGridScale();
+  }).on('mousedown', function(event) {
+    event.stopPropagation();
+  });
+
+  $('.placecentral').on('click', function() {
+    There.openUrl('https://webapps.prod.there.com/places/places?count=100');
   });
   $('.appspanel').on('mousedown', function(event) {
     event.stopPropagation();

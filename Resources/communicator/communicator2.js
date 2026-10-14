@@ -273,11 +273,13 @@ There.init({
         return base.map((b, i) => Math.round(b * (1 - frac) + a[i] * frac)).join(', ');
       };
       root.style.setProperty('--accent', t.accent);
+      root.style.setProperty('--accent-rgb', a.join(', '));
       root.style.setProperty('--bg', `rgba(${mix([17, 21, 28], 0.16)}, 0.88)`);
       root.style.setProperty('--bg-menu', `rgb(${mix([28, 35, 45], 0.18)})`);
       root.style.setProperty('--bg-active', `rgba(${a.join(', ')}, 0.18)`);
     } else {
       root.style.removeProperty('--accent');
+      root.style.removeProperty('--accent-rgb');
       root.style.removeProperty('--bg');
       root.style.removeProperty('--bg-menu');
       root.style.removeProperty('--bg-active');
@@ -628,6 +630,7 @@ There.init({
     if (sort == 'folders') {
       const map = There.avatarMap();
       const moved = There.movedDoids();
+      There.data.renderedIds = new Set();
       for (let folder of There.data.customFolders ?? []) {
         There.renderCustomFolder(divItems, folder, map);
       }
@@ -658,11 +661,16 @@ There.init({
 
   renderEntry: function(divItems, entry, indent, moved) {
     if (entry.type == 'avatar') {
-      if (!moved.has(entry.id) && There.isVisible(entry)) {
+      if (!moved.has(entry.id) && There.isVisible(entry) && !There.data.renderedIds.has(entry.id)) {
+        There.data.renderedIds.add(entry.id);
         There.renderAvatar(divItems, entry, indent);
       }
     } else if (entry.type == 'drawer') {
-      There.renderDrawer(divItems, entry, indent, moved);
+      // server side folders are ignored, their people join the flat list.
+      // organize with your own folders instead
+      for (let child of entry.entries) {
+        There.renderEntry(divItems, child, 0, moved);
+      }
     }
   },
 
@@ -754,54 +762,20 @@ There.init({
       $(divItem).attr('data-hover', '1');
     }
     $('<div class="dot"></div>').appendTo($(divItem));
-    $('<div class="name"></div>').text(entry.name).appendTo($(divItem));
-    if (entry.client == 'thereim') {
-      $('<div class="badge"></div>').text('IM').appendTo($(divItem));
-    }
-    let divActions = $('<div class="actions"></div>');
-    let divActionIm = $('<div class="action"></div>').text('IM');
-    $(divActionIm).on('click', function(event) {
+    $('<div class="name"></div>').text(entry.name).on('click', function(event) {
       event.stopPropagation();
-      There.playSound('menu item activate');
-      There.clearContextMenu();
-      There.guiCommand({
-        av: entry.id,
-        action: 'im',
-      });
-    }).on('mousedown', function(event) {
-      event.stopPropagation();
-    }).appendTo($(divActions));
-    if (entry.group == 'buddy') {
-      let divActionRemove = $('<div class="action danger" title="Remove Buddy"></div>').text('✕');
-      $(divActionRemove).on('click', function(event) {
-        event.stopPropagation();
-        There.playSound('menu item activate');
+      There.playSound('control down');
+      if (There.data.menu?.id == entry.id) {
         There.clearContextMenu();
-        There.guiCommand({
-          av: entry.id,
-          action: 'removeBuddy',
-        });
-      }).on('mousedown', function(event) {
-        event.stopPropagation();
-      }).appendTo($(divActions));
+      } else {
+        There.setupContextMenu(divItem, entry);
+      }
+    }).appendTo($(divItem));
+    if (entry.client == 'thereim') {
+      $('<div class="badge"></div>').text('ThereIM').appendTo($(divItem));
     }
-    $(divActions).appendTo($(divItem));
-    $(divItem).on('mouseover', function() {
-      const timeout = $('.contextmenu').attr('data-active') == 1 ? 500 : 350;
-      There.setNamedTimer('context-menu', timeout, function() {
-        if (There.data.menu?.id != entry.id) {
-          There.setupContextMenu(divItem, entry);
-        }
-      });
-    }).on('mousemove', function(event) {
+    $(divItem).on('mousemove', function(event) {
       event.stopPropagation();
-    }).on('dblclick', function() {
-      There.playSound('menu item activate');
-      There.clearContextMenu();
-      There.guiCommand({
-        av: entry.id,
-        action: 'im',
-      });
     });
     $(divItem).appendTo($(divItems));
   },
@@ -1166,13 +1140,6 @@ $(document).ready(function() {
 
   $('.footer .button[data-id="newfolder"]').on('click', function() {
     There.openFolderDialog('create');
-  });
-
-  $('.controls .button.sync').on('mouseover', function() {
-    There.playSound('control rollover');
-  }).on('click', function() {
-    There.playSound('control down');
-    There.syncServerFolders();
   });
 
   $('.controls input[data-id="offline"]').on('change', function() {

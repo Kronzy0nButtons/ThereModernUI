@@ -15,6 +15,7 @@
   --text-dim: #93a1ae;
   --text-faint: #5f6c78;
   --accent: #38bdf8;
+  --accent-rgb: 56, 189, 248;
   --status-available: #4ade80;
   --status-away: #fbbf24;
   --status-dnd: #f87171;
@@ -835,8 +836,8 @@ body {
   color:var(--text);
   padding:8px;
   border-radius:8px;
-  background-color:color-mix(in srgb, var(--accent) 12%, transparent);
-  border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background-color:rgba(var(--accent-rgb), 0.12);
+  border:1px solid rgba(var(--accent-rgb), 0.4);
 }
 
 .cockpitgate .cgkey b {

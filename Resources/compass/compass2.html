@@ -189,6 +189,12 @@
 <div class="folderprompt" data-active="0"></div>
 <div class="panelfooter">
 <span class="footcount"></span>
+<div class="placebtns">
+<div class="button placemark" title="Save where you are standing as a new favorite">&#128204; Bookmark here</div>
+<div class="button placeundo" title="Go back to where you teleported from">&#8617; Undo teleport</div>
+<div class="button placedel" title="Rename or delete favorites in the game's organizer">&#128465; Edit / Delete</div>
+<div class="button placecentral" title="Browse every public place on There Central">&#127758; All Places</div>
+</div>
 <div class="footctls">
 <div class="quickequip" title="Quick equip: left-click a clothing card to wear/take off. Off: left-click opens the actions.">
 <span class="qelabel">Quick equip</span>
@@ -222,6 +228,11 @@
 <div class="setheading">Controls</div>
 <div class="sethint">In Action Mode (or while aiming a gun): <b>W A S D</b> move, <b>Space</b> jumps, <b>R</b> reloads and other letters don&#8217;t type. Press <b>Enter</b> to chat (Action Chat) and <b>Enter</b> again to send. <b>F1 to F12</b> use your Quick Bar slots at any time.</div>
 <div class="togglegrid controltoggles"></div>
+</div>
+<div class="setsection">
+<div class="setheading">UI Behaviour</div>
+<div class="sethint">How the dock behaves while you play: panels that close themselves after you use them, and the speedometer that appears when you drive.</div>
+<div class="togglegrid behaviortoggles"></div>
 </div>
 <div class="setsection">
 <div class="setheading">GIFs</div>
@@ -377,6 +388,45 @@ Message Bar.
 <div class="scenesbody"></div>
 <div class="emotehint">Drag a scene onto a Quick Bar slot to fire it with an F-key</div>
 <div class="folderprompt scenesprompt" data-active="0"></div>
+</div>
+<div class="shoppanel">
+<div class="panelbar">
+<span class="paneltitle">Shop</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="shopcrumbs"></div>
+<div class="shopbody"></div>
+<div class="shopfoot">
+<div class="viewtoggle shopviewtoggle" title="View">
+<div class="vbtn" data-view="tile" title="Tiles">&#9638;</div>
+<div class="vbtn" data-view="list" title="List">&#9776;</div>
+</div>
+<input type="range" class="gridscale shopscale" min="110" max="230" step="10" title="Card size">
+<div class="button shopcentral" title="Open the shop on There Central">&#127978; There Central</div>
+</div>
+</div>
+<div class="auctionspanel">
+<div class="panelbar">
+<span class="paneltitle">Auctions</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="aucontrols">
+<input type="text" class="ausearch" placeholder="Search auctions&#8230;" spellcheck="false">
+<div class="aucat" data-open="0"><span class="aucatlabel">Browse&#8230;</span><span class="aucatarrow">&#9662;</span></div>
+<div class="ausort" data-open="0"><span class="ausortlabel">Sort&#8230;</span><span class="aucatarrow">&#9662;</span></div>
+<div class="aucatlist" data-open="0"></div>
+<div class="ausortlist" data-open="0"></div>
+</div>
+<div class="aucrumbs"></div>
+<div class="aubody"></div>
+<div class="aufoot">
+<div class="viewtoggle shopviewtoggle" title="View">
+<div class="vbtn" data-view="tile" title="Tiles">&#9638;</div>
+<div class="vbtn" data-view="list" title="List">&#9776;</div>
+</div>
+<input type="range" class="gridscale aucscale" min="110" max="230" step="10" title="Card size">
+<div class="button aucentral" title="Open auctions on There Central">&#128176; There Central</div>
+</div>
 </div>
 <div class="actionbar" data-active="0">
 <div class="abitem">
