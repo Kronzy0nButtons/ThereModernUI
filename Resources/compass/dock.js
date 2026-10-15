@@ -25,6 +25,7 @@ There.init({
     // saved combos come from their own pilotPobs containers. No catalog image so
     // they get a glyph, but still Put On / About / Rename / Delete
     { id: 'outfits', name: 'Outfits', pob: 'outfits', glyph: '👔' },
+    { id: 'dna', name: 'DNA', dna: true },
     { id: 'looksets', name: 'Looksets', pob: 'looksets', glyph: '✨' },
   ],
 
@@ -66,6 +67,7 @@ There.init({
     { id: 'viewbody', name: 'Body Mirror', group: 'view' },
     { id: 'actionmode', name: 'Action Mode', group: 'tools' },
     { id: 'music', name: 'Music', group: 'tools' },
+    { id: 'volume', name: 'Volume', group: 'tools' },
     { id: 'quickbar', name: 'Quick Bar', group: 'tools' },
   ],
 
@@ -147,6 +149,34 @@ There.init({
       YtMusic.onTrackChange = There.onMusicTrack;
       YtMusic.onPlayerStateChange = There.onMusicState;
       YtMusic.init(There.data.pilotDoid || 0);
+    } catch (error) {
+    }
+
+    // pause meter: any stretch the dock's page was blocked for 100ms or more,
+    // with what it was doing then. shown in Settings > Sync & data
+    try {
+      new PerformanceObserver(function(list) {
+        for (const e of list.getEntries()) {
+          if (e.duration < 100) {
+            continue;
+          }
+          const d = There.data.doing;
+          const what = d && Date.now() - d.at < 3000 ? d.what : 'background';
+          const worst = There.data.worstPause;
+          if (!worst || e.duration > worst.ms) {
+            There.data.worstPause = { ms: Math.round(e.duration), what: what };
+          }
+          There.data.lastPause = { ms: Math.round(e.duration), what: what };
+        }
+      }).observe({ entryTypes: ['longtask'] });
+    } catch (error) {
+    }
+
+    // /commands in chat (the Command Bar's list, when it's installed): the dock
+    // needs the chat feed open for them, even with GIFs and Party sync off
+    try {
+      TmuiCommands.onReady = There.ensureChatPoll;
+      TmuiCommands.init();
     } catch (error) {
     }
 
@@ -369,12 +399,42 @@ There.init({
       }
       return;
     }
+    // the DLL's picture store is up: photos come off disk from now on
+    if (name == 'tmui_imgcache') {
+      if (!CatalogImages.localLane) {
+        CatalogImages.localLane = true;
+        There.prefetchPhotos();
+      }
+      return;
+    }
     if (name == 'tmui_rmb') {
       $('.speedo').attr('data-boost', value == '1' ? '1' : '0');
       return;
     }
+    // Delete pressed in game: getting out. drop the needle now, then let a
+    // quick seat check confirm (still seated = the key was for something
+    // else, and the live needle comes straight back)
+    if (name == 'tmui_getout') {
+      if ($('.speedo').attr('data-active') == '1') {
+        There.speedoShutdown();
+        There.setNamedTimer('speedo', 900, There.speedoTick);
+      }
+      return;
+    }
     if (name == 'tmui_chatreader') {
+      // "0": the page reading the feed for us closed, read it ourselves again
+      if (value == '0') {
+        There.data.chatRelayAt = 0;
+        There.clearNamedTimer('shadow-poll');
+        There.shadowPoll();
+        return;
+      }
       There.onChatReaderSeen();
+      return;
+    }
+    // FlashProxy keeps /command lines from other pages: every one is ours
+    if (name == 'tmui_cmdowner') {
+      There.data.cmdOwner = value == '1';
       return;
     }
     if (name == 'tmui_chatfeed') {
@@ -425,6 +485,10 @@ There.init({
         There.updateGate();
       }
       There.data.pilotDoid = value;
+      // /commands match on the avatar's name
+      if (typeof TmuiCommands != 'undefined') {
+        TmuiCommands.loadPilot();
+      }
       // re-key the clothing image cache to this avatar
       try {
         CatalogImages.pilotDoid = value;
@@ -548,11 +612,26 @@ There.init({
       const seated = (names || []).some(n => /^get (out|off)\b/i.test(n));
       There.speedoNote(names == null ? 'read failed' : (seated ? 'seated' : `on foot (${(names || []).join('/') || 'none'})`));
       if (!seated) {
-        There.setSpeedo(false);
+        There.data.speedoSeatStreak = 0;
+        // the engine cuts: spin the needle down before the gauge goes
+        There.speedoShutdown();
         There.data.speedoPrev = null;
         There.data.speedoEma = 0;
         There.data.speedoVeh = null;
+        There.data.speedoFacing = null;
+        There.data.speedoAnchor = null;
+        There.data.speedoReverse = false;
         There.setNamedTimer('speedo', There.SPEEDO_IDLE_MS, There.speedoTick);
+        return;
+      }
+      // just got out (or Delete was pressed): the menu can lag a moment and
+      // still say seated. take it only on two readings in a row, so a stale
+      // one can't flick the engine back on
+      There.data.speedoSeatStreak = (There.data.speedoSeatStreak || 0) + 1;
+      const justLeft = There.data.speedoOff ||
+        Date.now() - (There.data.speedoOffAt || 0) < 3000;
+      if (justLeft && There.data.speedoSeatStreak < 2) {
+        There.setNamedTimer('speedo', 400, There.speedoTick);
         return;
       }
       // our own position freezes while seated, the VEHICLE's thob is what moves.
@@ -643,8 +722,11 @@ There.init({
         There.speedoMeasure(There.parsePosOrDel(xml));
         // every few samples make sure we're still seated
         There.data.speedoChecks = (There.data.speedoChecks || 0) + 1;
-        const recheck = There.data.speedoChecks % 6 == 0;
-        There.setNamedTimer('speedo', There.SPEEDO_FAST_MS, recheck ? There.speedoTick : There.speedoSample);
+        // every other sample: getting out from the menu shows within half a second
+        const recheck = There.data.speedoChecks % 2 == 0;
+        // crawling (stops, reversing): look more often so R and N show quickly
+        const crawl = (There.data.speedoEma || 0) * There.SPEEDO_CAL * 0.621 < 10;
+        There.setNamedTimer('speedo', crawl ? 250 : There.SPEEDO_FAST_MS, recheck ? There.speedoTick : There.speedoSample);
       },
       error: function() {
         // the vehicle thob can vanish (put away while seated): fall back
@@ -671,21 +753,100 @@ There.init({
       }
     }
     if (pos) {
+      There.speedoTrackReverse(pos, kmh * There.SPEEDO_CAL * 0.621);
+      There.gpsFeed(pos);
+    }
+    if (pos) {
       There.data.speedoPrev = { p: pos, t: now };
     }
     // quick on the throttle, settles smoothly when coasting
     There.data.speedoEma = (There.data.speedoEma || 0) * 0.35 + kmh * 0.65;
-    // seated = shown, even at 0. the seat check is the only gate
-    There.setSpeedo(true);
+    // samples only feed a gauge that's up and running. turning it on (or back
+    // on mid spin-down) is the seat check's job alone: a sample still in
+    // flight when you got out must not restart the engine
+    if (There.data.speedoOff || $('.speedo').attr('data-active') != '1') {
+      return;
+    }
     const shown = There.data.speedoEma < There.SPEEDO_DEAD_KMH ? 0 : There.data.speedoEma * There.SPEEDO_CAL;
     There.showSpeedo(shown);
   },
 
+  // Reverse. The game exposes no heading for a vehicle, only where it is, so
+  // the way it's FACING is learned from driving: moving forward, facing is
+  // the direction of travel. A car can't spin round on the spot, so when it
+  // slows to a crawl and then moves off the other way, it's backing up (and
+  // while reversing it faces away from its travel). The world is a sphere, so
+  // "up" is away from its centre and only the level part of the motion counts.
+  // The first move after getting in is taken as forward.
+  // Direction is judged once the vehicle has really covered a little ground
+  // since the last judgement (parked jitter stays well inside it), not by
+  // speed: reversing builds speed slowly and must still show at once.
+  SPEEDO_STEP: 1.2,
+  // faster than this (shown mph) can't be reverse gear
+  SPEEDO_REVERSE_MAX: 12,
+
+  speedoTrackReverse: function(pos, mph) {
+    const anchor = There.data.speedoAnchor;
+    if (!anchor) {
+      There.data.speedoAnchor = pos;
+      return;
+    }
+    const r = Math.sqrt(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]) || 1;
+    const up = [pos[0] / r, pos[1] / r, pos[2] / r];
+    let d = [pos[0] - anchor[0], pos[1] - anchor[1], pos[2] - anchor[2]];
+    const rise = d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
+    d = [d[0] - rise * up[0], d[1] - rise * up[1], d[2] - rise * up[2]];
+    const len = Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (len < There.SPEEDO_STEP) {
+      return;
+    }
+    There.data.speedoAnchor = pos;
+    const dir = [d[0] / len, d[1] / len, d[2] / len];
+    // reverse gear is slow: anything quick is forward. this also corrects a
+    // wrong start (dock reloaded mid-ride and the first move was backing up)
+    if (mph > There.SPEEDO_REVERSE_MAX) {
+      There.data.speedoFacing = dir;
+      There.data.speedoReverse = false;
+      return;
+    }
+    const facing = There.data.speedoFacing;
+    if (!facing) {
+      There.data.speedoFacing = dir;
+      There.data.speedoReverse = false;
+      return;
+    }
+    const dot = dir[0] * facing[0] + dir[1] * facing[1] + dir[2] * facing[2];
+    const back = [-dir[0], -dir[1], -dir[2]];
+    // a flip only counts at crawling speed: nothing turns round at speed
+    const slow = mph < 10;
+    if (!There.data.speedoReverse) {
+      if (dot < -0.5 && slow) {
+        There.data.speedoReverse = true;
+        There.data.speedoFacing = back;
+      } else if (dot > -0.5) {
+        There.data.speedoFacing = dir;
+      }
+    } else {
+      // reversing: travel points out the back, so moving WITH facing = forward
+      if (dot > 0.5 && slow) {
+        There.data.speedoReverse = false;
+        There.data.speedoFacing = dir;
+      } else if (dot < 0.5) {
+        There.data.speedoFacing = back;
+      }
+    }
+  },
+
   setSpeedo: function(on) {
+    // back in the seat mid spin-down: the engine catches again
+    if (on && There.data.speedoOff) {
+      There.data.speedoOff = null;
+    }
     const was = $('.speedo').attr('data-active') == '1';
     if (on && !was) {
       // show first so the position code can measure it
       $('.speedo').attr('data-active', '1');
+      There.speedoStartup();
       There.applySpeedoPos();
       There.syncWindowShape();
       return;
@@ -791,53 +952,254 @@ There.init({
     }
   },
 
-  // pretend engine: each gear climbs from ~2.2k to ~6.8k across its speed band,
-  // so accelerating sweeps the needle up and "shifts" drop it like a real box.
-  // idle sits just under 1k, boost leans it toward the redline
-  SPEEDO_GEARS: [[0, 8], [8, 16], [16, 26], [26, 38], [38, 50]],
+  // There's vehicles have no gearbox: the engine is one sound whose pitch
+  // rises with speed. The needle follows that same note, one smooth climb from
+  // idle to near the redline at top speed, never dropping on a fake shift.
+  // Boost leans it toward the redline. Rising a little faster at the start
+  // keeps it in step with how the pitch is heard pulling away
+  SPEEDO_IDLE_RPM: 0.9,
+  SPEEDO_TOP_RPM: 7.4,
 
-  // which gear the pretend box is in for a given speed ('N' at a stop)
+  // automatic: neutral at a stop, drive when moving, R when backing up
   speedoGear: function(mph) {
+    // the smoothed speed lags at a crawl: a detected reverse shows at once
+    if (There.data.speedoReverse && mph > 0.05) {
+      return 'R';
+    }
     if (mph < 0.4) {
       return 'N';
     }
-    for (let i = 0; i < There.SPEEDO_GEARS.length; i++) {
-      if (mph < There.SPEEDO_GEARS[i][1]) {
-        return i + 1;
-      }
-    }
-    return There.SPEEDO_GEARS.length;
+    return 'D';
   },
 
   speedoRpm: function(mph, boost) {
-    if (mph < 0.4) {
-      return 0.85 + (boost || 0) * 0.6;
-    }
-    let lo = 0;
-    let hi = 8;
-    for (const g of There.SPEEDO_GEARS) {
-      lo = g[0];
-      hi = g[1];
-      if (mph < g[1]) {
-        break;
-      }
-    }
-    const f = Math.min(1, (mph - lo) / (hi - lo));
-    const first = lo == 0;
-    let rpm = (first ? 1.1 : 2.2) + f * (6.8 - (first ? 1.1 : 2.2));
+    const f = Math.max(0, Math.min(1, mph / There.SPEEDO_BAR_MPH));
+    let rpm = There.SPEEDO_IDLE_RPM + Math.pow(f, 0.8) * (There.SPEEDO_TOP_RPM - There.SPEEDO_IDLE_RPM);
     rpm += (boost || 0) * 1.1;
     return Math.min(rpm, 8.6);
+  },
+
+  /* ------- photo prefetch -------
+   * Hand the picture store every wardrobe and inventory photo, in batches,
+   * so they're on disk before a panel opens. It skips the ones it already
+   * has, so this is cheap to repeat whenever the lists change. */
+
+  prefetchPhotos: function() {
+    if (!CatalogImages.localLane || !CatalogImages.loaded) {
+      return;
+    }
+    const items = (There.data.accoutrements || []).concat(There.data.inventory || []);
+    const sent = There.data.photosSent = There.data.photosSent || {};
+    const files = [];
+    for (const f of CatalogImages.filesFor(items)) {
+      if (!sent[f]) {
+        sent[f] = true;
+        files.push(f);
+      }
+    }
+    // the wardrobe opens on All: its photos first
+    let i = 0;
+    const batch = function() {
+      if (i >= files.length) {
+        return;
+      }
+      There.fsCommand('tmuiPrefetch', { files: files.slice(i, i + 80).join('|') });
+      i += 80;
+      There.setNamedTimer('photo-prefetch', 250, batch);
+    };
+    batch();
+  },
+
+  /* ------- GPS screen beside the speedo -------
+   * The Places map engine (gpsmaps.js) on a tilted plane, heading-up like a
+   * sat-nav: the map turns and slides under a fixed car arrow. Fed by the
+   * speedo's own position samples, drawn in its animation frames, so it
+   * costs no extra reads from the game. */
+
+  GPS_PLANE: 520,
+
+  gpsFeed: function(pos) {
+    if (!There.prefs().gps || !There.prefs().gpsOpen || typeof TmuiMaps == 'undefined') {
+      return;
+    }
+    const at = TmuiMaps.locate(pos);
+    if (!at) {
+      return;
+    }
+    // the same ground distance per screen pixel on every island: zoom by the
+    // map's own scale
+    const r = TmuiMaps.region(at.id);
+    const z = r ? Math.max(1.4, Math.min(6, r.sx / 40)) : 2.5;
+    const g = There.data.gps;
+    if (!g || g.src != at.src) {
+      // a different map: jump straight there, no slide across the sea
+      There.data.gps = { src: at.src, x: at.px, y: at.py, z: z, tx: at.px, ty: at.py, tz: z };
+      $('.gpsimg').attr('src', at.src);
+      $('.gpsname').text(at.name);
+    } else {
+      g.tx = at.px;
+      g.ty = at.py;
+      g.tz = z;
+    }
+  },
+
+  gpsFrame: function() {
+    const g = There.data.gps;
+    if (!g || !There.prefs().gps || !There.prefs().gpsOpen) {
+      return;
+    }
+    // glide between samples; samples are a quarter to half a second apart
+    g.x += (g.tx - g.x) * 0.12;
+    g.y += (g.ty - g.y) * 0.12;
+    g.z += (g.tz - g.z) * 0.1;
+    const half = There.GPS_PLANE / 2;
+    const h = There.data.heading || 0;
+    $('.gpsmap').css('transform',
+      `translate(${half}px, ${half}px) rotate(${-h}deg) scale(${g.z}) translate(${-g.x}px, ${-g.y}px)`);
+    // the sea's grid turns and drifts with the map, so motion reads even
+    // over open water
+    $('.gpssea').css({
+      transform: `rotate(${-h}deg)`,
+      'background-position': `${-g.x * g.z}px ${-g.y * g.z}px`,
+    });
+  },
+
+  // getting out cuts the engine: the gauge stays up while it spins down, then
+  // slides away
+  speedoShutdown: function() {
+    if ($('.speedo').attr('data-active') != '1') {
+      return;
+    }
+    if (There.data.speedoOff) {
+      return;
+    }
+    const rpm = There.data.speedoRpmShown || 0;
+    There.data.speedoOff = { engine: rpm, n: rpm, v: 0, last: performance.now(), still: 0 };
+    There.data.speedoOffAt = Date.now();
+    There.data.speedoSeatStreak = 0;
+    There.data.speedoTarget = 0;
+    $('.speedo .spdval').text('0');
+    There.data.speedoDigits = 0;
+    $('.speedo .spdgear').text('N');
+    There.data.speedoGearShown = 'N';
+    if (!There.data.speedoAnimOn) {
+      There.data.speedoAnimOn = true;
+      requestAnimationFrame(There.speedoAnim);
+    }
+  },
+
+  // one frame of the spin-down. the engine's revs fall away fast then trail
+  // off; the needle is a sprung pointer chasing them, so it lags a touch,
+  // knocks against the zero peg and settles. true once it's all at rest
+  speedoSpinDown: function() {
+    const s = There.data.speedoOff;
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - s.last) / 1000);
+    s.last = now;
+    s.engine = Math.max(0, s.engine * Math.exp(-dt * 4.5) - 0.8 * dt);
+    const accel = (s.engine - s.n) * 140 - s.v * 13;
+    s.v += accel * dt;
+    s.n += s.v * dt;
+    if (s.n < 0) {
+      s.n = 0;
+      // off the peg with a little of its speed, then dead
+      s.v = Math.abs(s.v) > 0.15 ? -s.v * 0.32 : 0;
+    }
+    const frac = Math.max(0, Math.min(1, s.n / There.SPEEDO_RPM_MAX));
+    $('.speedo .sgneedle').css('transform', `rotate(${-30 + 240 * frac}deg)`);
+    $('.speedo .sgfill').css('stroke-dashoffset', 360.2 * (1 - frac));
+    There.data.speedoRpmShown = s.n;
+    if (s.engine == 0 && s.n < 0.01 && Math.abs(s.v) < 0.05) {
+      s.still += dt;
+    } else {
+      s.still = 0;
+    }
+    // a beat at rest on the peg before the gauge goes
+    return s.still > 0.6;
+  },
+
+  // getting in: the starter cranks the needle in jerky pulses, the engine
+  // catches and flares past 2k, then drops back and settles into its idle.
+  // same sprung needle as the spin-down
+  speedoStartup: function() {
+    There.buildSpeedoDial();
+    There.data.speedoOff = null;
+    There.data.speedoStart = { t: 0, n: 0, v: 0, last: performance.now() };
+    if (!There.data.speedoAnimOn) {
+      There.data.speedoAnimOn = true;
+      requestAnimationFrame(There.speedoAnim);
+    }
+  },
+
+  // where the engine's revs are, t seconds into a start
+  speedoCrankRpm: function(t) {
+    if (t < 0.8) {
+      // starter motor churning: a few lumpy pulses a second, not firing yet
+      return 0.15 + Math.abs(Math.sin(t * 11)) * 0.55 + Math.sin(t * 47) * 0.03;
+    }
+    if (t < 1.0) {
+      // it catches
+      return 0.6 + (t - 0.8) / 0.2 * 1.9;
+    }
+    // the flare dies back down to idle
+    return There.SPEEDO_IDLE_RPM + 1.6 * Math.exp(-(t - 1.0) * 3.2);
+  },
+
+  // one frame of the start. true once it has settled to idle
+  speedoCrank: function() {
+    const s = There.data.speedoStart;
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - s.last) / 1000);
+    s.last = now;
+    s.t += dt;
+    const engine = There.speedoCrankRpm(s.t);
+    const accel = (engine - s.n) * 160 - s.v * 14;
+    s.v += accel * dt;
+    s.n += s.v * dt;
+    if (s.n < 0) {
+      s.n = 0;
+      s.v = Math.abs(s.v) > 0.15 ? -s.v * 0.32 : 0;
+    }
+    const frac = Math.max(0, Math.min(1, s.n / There.SPEEDO_RPM_MAX));
+    $('.speedo .sgneedle').css('transform', `rotate(${-30 + 240 * frac}deg)`);
+    $('.speedo .sgfill').css('stroke-dashoffset', 360.2 * (1 - frac));
+    There.data.speedoRpmShown = s.n;
+    return s.t > 2.4;
   },
 
   speedoAnim: function() {
     if ($('.speedo').attr('data-active') != '1') {
       There.data.speedoAnimOn = false;
       There.data.speedoShown = 0;
+      There.data.speedoOff = null;
+      There.data.speedoStart = null;
+      There.data.gps = null;
+      return;
+    }
+    There.gpsFrame();
+    if (There.data.speedoStart && !There.data.speedoOff) {
+      // pulling away mid-start: hand over to the live needle at once
+      const moving = (There.data.speedoTarget || 0) * 0.621 > 2;
+      if (moving || There.speedoCrank()) {
+        There.data.speedoStart = null;
+      }
+      requestAnimationFrame(There.speedoAnim);
+      return;
+    }
+    if (There.data.speedoOff) {
+      if (There.speedoSpinDown()) {
+        There.data.speedoOff = null;
+        There.data.speedoShown = 0;
+        There.data.speedoRpmShown = 0;
+        There.setSpeedo(false);
+      }
+      requestAnimationFrame(There.speedoAnim);
       return;
     }
     const target = There.data.speedoTarget || 0;
     let shown = There.data.speedoShown || 0;
-    shown += (target - shown) * 0.08;
+    // letting off drops quicker than pulling away climbs, like the engine note
+    shown += (target - shown) * (target < shown ? 0.16 : 0.08);
     if (Math.abs(target - shown) < 0.05) {
       shown = target;
     }
@@ -846,12 +1208,28 @@ There.init({
     // boost eases in and out rather than stepping
     const boostOn = $('.speedo').attr('data-boost') == '1' ? 1 : 0;
     There.data.speedoBoost = (There.data.speedoBoost || 0) + (boostOn - (There.data.speedoBoost || 0)) * 0.06;
-    // the rev needle gets its own lerp so gear shifts sweep instead of jumping
+    // the rev needle tracks the speed closely (it IS the engine note), with a
+    // touch of smoothing so sample steps don't make it twitch
     const rpmTarget = There.speedoRpm(mph, There.data.speedoBoost);
     let rpm = There.data.speedoRpmShown;
-    rpm = rpm == undefined ? rpmTarget : rpm + (rpmTarget - rpm) * 0.055;
+    rpm = rpm == undefined ? rpmTarget : rpm + (rpmTarget - rpm) * (rpmTarget < rpm ? 0.22 : 0.14);
     There.data.speedoRpmShown = rpm;
-    const frac = Math.min(1, rpm / There.SPEEDO_RPM_MAX);
+    // an old beach buggy's lumpy idle: the needle shivers and now and then
+    // stumbles, fading out as soon as it pulls away. display only, never fed
+    // back into the needle's own motion
+    const idle = Math.max(0, 1 - mph / 4);
+    let wobble = 0;
+    if (idle > 0) {
+      const t = performance.now() / 1000;
+      wobble = Math.sin(t * 23) * 0.03 + Math.sin(t * 7.3 + 1.7) * 0.045;
+      // the stumble: a short dip every couple of seconds, off the beat
+      const lump = Math.sin(t * 2.9) * Math.sin(t * 1.3 + 0.6);
+      if (lump > 0.82) {
+        wobble -= (lump - 0.82) * 0.6;
+      }
+      wobble *= idle;
+    }
+    const frac = Math.max(0, Math.min(1, (rpm + wobble) / There.SPEEDO_RPM_MAX));
     $('.speedo .sgneedle').css('transform', `rotate(${-30 + 240 * frac}deg)`);
     $('.speedo .sgfill').css('stroke-dashoffset', 360.2 * (1 - frac));
     const rounded = Math.round(mph);
@@ -1241,7 +1619,8 @@ There.init({
 
   // start/stop the shared chat feed poll depending on who needs it (shadow, party sync)
   ensureChatPoll: function() {
-    const need = There.data.shadowOn || There.prefs().party || There.prefs().gifs;
+    const need = There.data.shadowOn || There.prefs().party || There.prefs().gifs ||
+      (typeof TmuiCommands != 'undefined' && TmuiCommands.ready());
     if (need && !There.data.chatPollOn) {
       There.data.chatPollOn = true;
       There.data.shadowVer = undefined;
@@ -1291,7 +1670,7 @@ There.init({
       dataType: 'xml',
       timeout: 0, // no timeout on purpose, see above
       success: function(xml) {
-        There.handleChatXml(xml, There.data.shadowVer == undefined);
+        There.handleChatXml(xml, There.data.shadowVer == undefined, true);
       },
       error: function() {
         failed = true;
@@ -1306,8 +1685,9 @@ There.init({
 
   // A chat feed answer (our own, or the Command Bar's copy from FlashProxy).
   // backlog = what was already there when the reader started: remember it,
-  // don't act on it.
-  handleChatXml: function(xml, backlog) {
+  // don't act on it. direct = we read it ourselves, so no other page got
+  // these lines (only then do we run /commands, or they'd run twice)
+  handleChatXml: function(xml, backlog, direct) {
     try {
       const ver = xml.getElementsByTagName('version')[0]?.childNodes[0]?.nodeValue;
       if (ver != undefined) {
@@ -1336,7 +1716,7 @@ There.init({
       const fresh = lines.length > 1 && prev.length ? There.newChatLines(prev, lines) : lines;
       There.data.chatSeen = prev.concat(fresh.map(l => l.key)).slice(-50);
       for (const line of fresh) {
-        There.onChatLine(line.author, line.text);
+        There.onChatLine(line.author, line.text, !!direct);
       }
     } catch (error) {
     }
@@ -1370,7 +1750,8 @@ There.init({
       return;
     }
     There.onChatReaderSeen();
-    if (!There.prefs().gifs && !There.prefs().party && !There.data.shadowOn) {
+    const commands = typeof TmuiCommands != 'undefined' && TmuiCommands.ready();
+    if (!There.prefs().gifs && !There.prefs().party && !There.data.shadowOn && !commands) {
       return;
     }
     There.handleChatXml(xml, v.slice(0, bar) === '0');
@@ -1399,9 +1780,31 @@ There.init({
     return lines;
   },
 
-  onChatLine: function(author, text) {
+  onChatLine: function(author, text, direct) {
     const target = (There.data.shadowTarget || '').toLowerCase();
     const me = (There.variables.there_pilotname || '').toLowerCase();
+    // a /command: ours when we typed it, or when the player we mimic did
+    // (/emote <name>). lines the Command Bar also got are ours only once
+    // FlashProxy hides /commands from it (cmdOwner), or both would run them
+    if ((direct || There.data.cmdOwner) && typeof TmuiCommands != 'undefined' && TmuiCommands.ready()) {
+      const lower = author.toLowerCase();
+      const puppeteer = String(TmuiCommands.session.puppeteer || '').toLowerCase();
+      const trimmed = text.trim();
+      if (lower == me && trimmed.startsWith('/')) {
+        TmuiCommands.run(trimmed);
+        return;
+      }
+      if (puppeteer && lower == puppeteer) {
+        if (trimmed.startsWith('/')) {
+          TmuiCommands.run(trimmed);
+        }
+        for (const token of trimmed.split(' ')) {
+          if (/^['`]+[a-zA-Z0-9]+$/.test(token)) {
+            There.sendChat(token + token[0]);
+          }
+        }
+      }
+    }
     // party sync: someone broadcast a track, play along
     if (There.prefs().party && author.toLowerCase() != me) {
       // "[TMUI] [DJ] [<id>]" (older docks sent "[TMUI] np:<id>")
@@ -2147,7 +2550,7 @@ There.init({
       title: `♪ via ${author}`,
       author: author,
       duration: 0,
-      thumb: `https://i.ytimg.com/vi/${videoId}/default.jpg`,
+      thumb: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
     });
     YtMusic.data.index = YtMusic.data.queue.length - 1;
     YtMusic.playCurrent();
@@ -2495,6 +2898,11 @@ There.init({
         There.togglePanel('music');
         break;
       }
+      case 'volume': {
+        // the game's sliders in a dock panel (run through the headless window)
+        There.togglePanel('volume');
+        break;
+      }
       case 'settings': {
         There.togglePanel('settings');
         break;
@@ -2513,6 +2921,7 @@ There.init({
       There.closePanel();
       return;
     }
+    There.data.doing = { what: `opening ${id}`, at: Date.now() };
     There.data.panel = id;
     There.data.search = '';
     $('.panelsearch input').val('');
@@ -2543,8 +2952,11 @@ There.init({
       There.loadAuctionsHome();
     } else if (id == 'places') {
       $('.panel .paneltitle').text('Places');
-      $('.tabs').empty();
+      There.renderPlacesTabs();
       There.loadPlaces();
+      if (There.data.placesTab == 'map') {
+        There.mapTick();
+      }
     } else if (id == 'scenes') {
       There.data.scenePicker = null;
       There.renderScenes();
@@ -2561,8 +2973,102 @@ There.init({
       There.renderDockToggles();
       There.renderThemeSwatches();
       There.updateSyncStatus();
+    } else if (id == 'volume') {
+      There.volOpen();
     }
     // About is static, nothing to load
+  },
+
+  /* ------- Volume panel -------
+   * The game only hands its sound levels to its own volume window and only
+   * takes changes from it, so that window runs headless (volumecontrol/
+   * volume.js) and the dock talks to it through localStorage: tmui-vol for
+   * its reports, tmui-vol-cmd for our changes. */
+
+  volState: function() {
+    try {
+      return JSON.parse(localStorage.getItem('tmui-vol') || 'null');
+    } catch (error) {
+      return null;
+    }
+  },
+
+  volSend: function(msg) {
+    const seq = Date.now() + Math.random();
+    try {
+      localStorage.setItem('tmui-vol-cmd', JSON.stringify(Object.assign({ seq: seq }, msg)));
+    } catch (error) {
+    }
+    return seq;
+  },
+
+  // the panel shows the last known levels at once. the hidden window stays
+  // open between visits, so it usually answers the ping within a frame; only
+  // when nobody answers is it opened (the client's volume command toggles, so
+  // asking while it's open would close it). changes made before it's up wait
+  // in tmui-vol-cmd and it runs them when it starts
+  volOpen: function() {
+    There.volRender(There.volState());
+    There.data.volPing = There.volSend({ ping: true });
+    There.setNamedTimer('vol-launch', 250, function() {
+      const now = There.volState();
+      const answered = now && now.open && now.pong == There.data.volPing;
+      if (!answered && There.data.panel == 'volume') {
+        There.engineGuiCommand('volumeSliders');
+      }
+    });
+  },
+
+  volRender: function(st) {
+    // first time ever: no saved levels yet, the window's report fills them in
+    if (!st) {
+      return;
+    }
+    const rows = [
+      ['voice', st.voice, st.voiceEnabled],
+      ['music', st.music, st.musicEnabled],
+      ['environment', st.environment, 1],
+    ];
+    for (const [id, level, enabled] of rows) {
+      const row = $(`.volrow[data-id="${id}"]`);
+      const pct = Math.round(Math.max(0, Math.min(1, Number(level) || 0)) * 100);
+      // leave the slider alone while it's being dragged
+      if (There.data.volDrag != id) {
+        $(row).find('.volslider').val(pct);
+        $(row).find('.volvalue').text(pct + '%');
+      }
+      $(row).attr('data-enabled', enabled == 0 ? '0' : '1');
+    }
+    const muted = Number(st.mute) == 1;
+    $('.volmute').attr('data-on', muted ? '1' : '0');
+    $('.volmutetext').text(muted ? 'Sound muted' : 'Mute all');
+    const notes = [];
+    if (st.voiceEnabled == 0) {
+      notes.push('Voice is off');
+    }
+    if (st.musicEnabled == 0) {
+      notes.push('Music is off');
+    }
+    $('.volnote').text(notes.join(' · '));
+  },
+
+  // a report from the volume window
+  onVolState: function(st) {
+    if (!st) {
+      return;
+    }
+    // a new window: the dock opened it, or the game's own menu did. either
+    // way the panel is its face
+    if (st.open && st.boot && st.boot != There.data.volBoot) {
+      There.data.volBoot = st.boot;
+      if (There.data.panel != 'volume') {
+        There.togglePanel('volume');
+        return;
+      }
+    }
+    if (There.data.panel == 'volume') {
+      There.volRender(st);
+    }
   },
 
   /* ------- "Cache all photos" sweep -------
@@ -2876,7 +3382,21 @@ There.init({
     }
   },
 
-  closePanel: function() {
+  closePanel: function(force) {
+    // at the spa, closing the wardrobe IS leaving: offer the save first
+    if (!force && There.data.panel == 'wardrobe' && There.data.wardrobeTab == 'dna') {
+      const st = There.dnaState();
+      if (st.treatments) {
+        if (There.data.dnaDirty) {
+          There.data.dnaCloseAsk = true;
+          There.data.dnaGateSig = null;
+          There.updateDnaGate();
+          return;
+        }
+        There.dnaLeaveNow();
+      }
+    }
+    There.data.dnaCloseAsk = false;
     There.data.panel = '';
     $('.dockroot').attr('data-panel', '');
     There.clearItemMenu();
@@ -2888,6 +3408,742 @@ There.init({
   openUrl: function(url) {
     There.playSound('menu item activate');
     There.fsCommand('browser', url);
+  },
+
+  /* ------- Wardrobe DNA tab (body and face shape) -------
+   * The looks live in the avatarLooks feed (phenomorph and sibling weights,
+   * skin tone index). Edits commit through the headless ChangeMe shim
+   * (Resources/changeme), because the client only accepts the body change
+   * commands from that window. Editing unlocks at a spa, exactly like the
+   * game intends: the shim relays there_treatmentsenabled and we honor it. */
+
+  // slider rows ported from the stock ChangeMe layout. two ids = a paired
+  // slider (left of center drives the first, right the second)
+  DNA_SLIDERS: [
+    { section: 'Body', label: 'Upper body', cat: 'upperbody', gendered: true },
+    { section: 'Body', label: 'Lower body', cat: 'lowerbody', ids: ['phenob'] },
+    { section: 'Body', label: 'Weight', cat: 'weight', ids: ['sibb'] },
+    { section: 'Body', label: 'Muscles', cat: 'muscularity', ids: ['sibc'],
+      envelope: [[-0.5, -0.4, -0.3, -0.2, -0.1, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0]], multiplier: [1] },
+    { section: 'Head shape', label: 'Height', cat: 'head,hair', ids: ['tall'] },
+    { section: 'Head shape', label: 'Round', cat: 'head,hair', ids: ['round'] },
+    { section: 'Head shape', label: 'Square', cat: 'head,hair', ids: ['square'] },
+    { section: 'Head shape', label: 'Pyramid', cat: 'head,hair', ids: ['pyramid'] },
+    { section: 'Head shape', label: 'Wedge', cat: 'head,hair', ids: ['wedge'] },
+    { section: 'Eyes & brows', label: 'Brow thickness', cat: 'head', ids: ['eyebrowthinner', 'eyebrowthicker'] },
+    { section: 'Eyes & brows', label: 'Brows closer', cat: 'head', ids: ['eyebrowscloser'] },
+    { section: 'Eyes & brows', label: 'Eyes apart', cat: 'head,hair', ids: ['eyesapart'] },
+    { section: 'Eyes & brows', label: 'Eye size', cat: 'head', ids: ['eyessmaller', 'eyesbigger'] },
+    { section: 'Eyes & brows', label: 'Eye tilt', cat: 'head', ids: ['eyetilt'] },
+    { section: 'Eyes & brows', label: 'Ears wider', cat: 'head', ids: ['earswider'] },
+    { section: 'Nose', label: 'Bridge', cat: 'head', ids: ['nosebridgesmaller', 'nosebridgelarger'] },
+    { section: 'Nose', label: 'Bulb', cat: 'head', ids: ['nosebulbsmall'], reverse: true },
+    { section: 'Nose', label: 'Hook', cat: 'head', ids: ['nosehook'] },
+    { section: 'Nose', label: 'Length', cat: 'head', ids: ['noselonger'] },
+    { section: 'Nose', label: 'Width', cat: 'head', ids: ['nosewider'] },
+    { section: 'Mouth & jaw', label: 'Jaw square', cat: 'head', ids: ['jawsquare'] },
+    { section: 'Mouth & jaw', label: 'Chin down', cat: 'head', ids: ['chindown'] },
+    { section: 'Mouth & jaw', label: 'Chin forward', cat: 'head', ids: ['chinforward'] },
+    { section: 'Mouth & jaw', label: 'Chin thickness', cat: 'head', ids: ['chinthinner', 'chinthicker'] },
+    { section: 'Mouth & jaw', label: 'Cheeks', cat: 'head', ids: ['cheeks'] },
+    { section: 'Mouth & jaw', label: 'Lip thickness', cat: 'head', ids: ['lipsthinner', 'lipsthicker'] },
+    { section: 'Mouth & jaw', label: 'Mouth size', cat: 'head', ids: ['mouthsmaller'], reverse: true },
+    { section: 'Mouth & jaw', label: 'Muzzle', cat: 'head', ids: ['muzzle'] },
+  ],
+
+  // the 10 named There skin tones (featurecolor index 1..10), approximate colors
+  DNA_SKINS: [
+    { name: 'Milk', color: '#f4ddc8' },
+    { name: 'Vanilla', color: '#efd0b0' },
+    { name: 'Latte', color: '#e3bb94' },
+    { name: 'Ginger', color: '#d9a878' },
+    { name: 'Butterscotch', color: '#cf9460' },
+    { name: 'Caramel', color: '#b97f4e' },
+    { name: 'Cappuccino', color: '#9c6239' },
+    { name: 'Mocha', color: '#7d4a2b' },
+    { name: 'Chocolate', color: '#5e3620' },
+    { name: 'Espresso', color: '#412514' },
+  ],
+
+  // is the headless ChangeMe engine alive, and did the spa unlock editing?
+  dnaState: function() {
+    try {
+      const st = JSON.parse(localStorage.getItem('tmui-dna') || 'null');
+      if (st && st.open && Date.now() - st.at < 6000) {
+        return {
+          alive: true,
+          treatments: !!st.treatments,
+          looksetName: st.looksetName || '',
+          looksetPoid: st.looksetPoid || '',
+          leaveAsk: st.leaveAsk || 0,
+        };
+      }
+    } catch (error) {
+    }
+    return { alive: false, treatments: false, looksetName: '', looksetPoid: '', leaveAsk: 0 };
+  },
+
+  // which lookset is the avatar wearing right now? that's the one the spa
+  // saves over. checked once per spa session
+  dnaCurrentLookset: function(cb) {
+    if (There.data.dnaLookset !== undefined) {
+      cb(There.data.dnaLookset);
+      return;
+    }
+    There.menuKids('/pilotPobs/looksets', function(poids) {
+      poids = (poids || []).filter(p => /^\d+$/.test(p));
+      const step = function(i) {
+        if (i >= poids.length) {
+          There.data.dnaLookset = null;
+          cb(null);
+          return;
+        }
+        There.fetch({
+          path: '/ScriptHook/Get',
+          query: { Path: `/pilotPobs/looksets/${poids[i]}/wearing` },
+          dataType: 'xml',
+          success: function(xml) {
+            let worn = false;
+            try {
+              worn = xml.getElementsByTagName('Value')[0].textContent == '1';
+            } catch (error) {
+            }
+            if (worn) {
+              // its display name rides on the pob node
+              There.fetch({
+                path: '/ScriptHook/Get',
+                query: { Path: `/pilotPobs/looksets/${poids[i]}/name` },
+                dataType: 'xml',
+                success: function(xml2) {
+                  let name = '';
+                  try {
+                    name = xml2.getElementsByTagName('Value')[0].textContent || '';
+                  } catch (error) {
+                  }
+                  There.data.dnaLookset = { poid: poids[i], name: name };
+                  There.data.dnaGateSig = null;
+                  cb(There.data.dnaLookset);
+                },
+                error: function() {
+                  There.data.dnaLookset = { poid: poids[i], name: '' };
+                  cb(There.data.dnaLookset);
+                },
+              });
+              return;
+            }
+            There.setNamedTimer('dna-ls-walk', 40, function() {
+              step(i + 1);
+            });
+          },
+          error: function() {
+            There.data.dnaLookset = null;
+            cb(null);
+          },
+        });
+      };
+      step(0);
+    });
+  },
+
+  // the shim runs the save inside the ChangeMe context; we wait for its answer
+  dnaSaveLookset: function(cb) {
+    There.dnaCurrentLookset(function(lookset) {
+      const st = There.dnaState();
+      const poid = (lookset && lookset.poid) || st.looksetPoid;
+      if (!poid) {
+        cb(false, 'no worn lookset found');
+        return;
+      }
+      There.data.dnaSaveStart = Date.now();
+      There.data.dnaSaveCb = cb;
+      try {
+        localStorage.setItem('tmui-dna-cmd', JSON.stringify({
+          seq: Date.now() + Math.random(),
+          save: true,
+          poid: poid,
+        }));
+      } catch (error) {
+      }
+      // if no answer comes back, report the failure instead of hanging
+      There.setNamedTimer('dna-save-timeout', 8000, function() {
+        if (There.data.dnaSaveCb) {
+          const pending = There.data.dnaSaveCb;
+          There.data.dnaSaveCb = null;
+          pending(false, 'engine silent, relog to reload it');
+        }
+      });
+    });
+  },
+
+  // short banner message, the gate redraws around it
+  dnaNoteShow: function(text, ms) {
+    There.data.dnaNote = { text: text, until: Date.now() + ms };
+    There.data.dnaGateSig = null;
+    There.updateDnaGate();
+    There.setNamedTimer('dna-note', ms + 50, There.updateDnaGate);
+  },
+
+  dnaLeaveNow: function() {
+    try {
+      localStorage.setItem('tmui-dna-cmd', JSON.stringify({ seq: Date.now() + Math.random(), leave: true }));
+    } catch (error) {
+    }
+  },
+
+  renderDna: function() {
+    const grid = $('.grid');
+    $(grid).empty();
+    let host = $('<div class="dnahost"></div>');
+    $('<div class="empty"></div>').text('Reading your looks\u2026').appendTo($(host));
+    $(host).appendTo($(grid));
+    There.fetchAvatarLooks(function(looks) {
+      if (There.data.panel != 'wardrobe' || There.data.wardrobeTab != 'dna') {
+        return;
+      }
+      There.renderDnaSliders(looks);
+    });
+    There.pollDna();
+  },
+
+  // keep the gate note live while the tab is open
+  pollDna: function() {
+    if (There.data.panel != 'wardrobe' || There.data.wardrobeTab != 'dna') {
+      return;
+    }
+    There.updateDnaGate();
+    There.setNamedTimer('dna-poll', 1000, There.pollDna);
+  },
+
+  fetchAvatarLooks: function(cb) {
+    There.fetch({
+      path: '/VersionedXmlSvc/avatarLooks',
+      query: { Oid: There.data.pilotDoid, request: Math.random() },
+      dataType: 'xml',
+      success: function(xml) {
+        const looks = { skeleton: null, skin: 0, attributes: {} };
+        try {
+          const root = xml.getElementsByTagName('AvatarLooks')[0];
+          for (const child of root.childNodes) {
+            if (child.nodeName == 'Skeleton') {
+              looks.skeleton = child.textContent;
+            } else if (child.nodeName == 'FeatureColorIndex') {
+              looks.skin = Number(child.textContent);
+            } else if (child.nodeName == 'Phenomorph' || child.nodeName == 'Sibling') {
+              const name = child.getElementsByTagName('Name')[0].textContent;
+              looks.attributes[name.toLowerCase()] = {
+                name: name,
+                value: Number(child.getElementsByTagName('Value')[0].textContent),
+                setter: child.nodeName == 'Phenomorph' ? 'setPhenomorphWeight' : 'setSiblingWeight',
+              };
+            }
+          }
+        } catch (error) {
+        }
+        There.data.dnaLooks = looks;
+        cb(looks);
+      },
+      error: function() {
+        cb(null);
+      },
+    });
+  },
+
+  renderDnaSliders: function(looks) {
+    const host = $('.grid .dnahost');
+    $(host).empty();
+    if (!looks || !looks.skeleton) {
+      $('<div class="empty"></div>').text('Could not read your looks. Is the Client Bridge on?').appendTo($(host));
+      return;
+    }
+    $('<div class="dnagate"></div>').appendTo($(host));
+    let bodyWrap = $('<div class="dnabody"></div>');
+    let figWrap = $('<div class="dnafigwrap"></div>');
+    $('<svg class="dnafig" viewBox="0 0 120 250"></svg>').appendTo($(figWrap));
+    $('<div class="dnafigcap"></div>').text('Live preview').appendTo($(figWrap));
+    // camera pad: orbits the real avatar via arrow taps (ChangeMe camera scheme)
+    let cam = $('<div class="dnacam"></div>');
+    const camBtn = function(key, glyph, title, slot) {
+      $('<div class="dnacambtn"></div>').attr('data-k', slot || key).attr('title', title).html(glyph).on('click', function() {
+        There.playSound('control down');
+        There.fsCommand('tmuiKey', 'key=' + key);
+      }).appendTo($(cam));
+    };
+    camBtn('up', tmuiIcon('play'), 'Camera up (closer to the face)');
+    camBtn('right', tmuiIcon('play'), 'Turn left', 'left');
+    camBtn('down', tmuiIcon('play'), 'Camera down / back out');
+    camBtn('left', tmuiIcon('play'), 'Turn right', 'right');
+    $('<div class="dnacamcap"></div>').text('Camera').appendTo($(figWrap));
+    $(cam).appendTo($(figWrap));
+    $(figWrap).appendTo($(bodyWrap));
+    let cols = $('<div class="dnacols"></div>');
+    $(cols).appendTo($(bodyWrap));
+    $(bodyWrap).appendTo($(host));
+    There.data.dnaValues = {};
+    for (const a in looks.attributes) {
+      There.data.dnaValues[a] = looks.attributes[a].value;
+    }
+    const colsHost = cols;
+    let lastSection = null;
+    for (const def of There.DNA_SLIDERS) {
+      // the upper body slider is built per gender, stock ChangeMe does the same
+      let spec = def;
+      if (def.gendered) {
+        if (looks.skeleton == 'ft0') {
+          spec = Object.assign({}, def, {
+            ids: ['phenod', 'phenoa'],
+            envelope: [
+              [0.0, 0.01, 0.02, 0.03, 0.08, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0],
+              [-1.0, -0.8, -0.6, -0.4, -0.3, -0.1, -0.04, -0.03, -0.02, -0.01, -0.0],
+            ],
+            multiplier: [1, -1],
+          });
+        } else {
+          spec = Object.assign({}, def, {
+            ids: ['phenod'],
+            envelope: [[0.0, 0.01, 0.02, 0.03, 0.08, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0]],
+            multiplier: [1],
+          });
+        }
+      }
+      if (spec.section != lastSection) {
+        lastSection = spec.section;
+        let sec = $('<div class="dnaacc" data-open="0"></div>');
+        let secHead = $('<div class="dnaacchead"></div>');
+        $('<span></span>').text(spec.section).appendTo($(secHead));
+        $('<span class="dnaacchevron"></span>').html(tmuiIcon('play')).appendTo($(secHead));
+        $(secHead).appendTo($(sec));
+        let secBody = $('<div class="dnaaccbody"></div>');
+        $(secBody).appendTo($(sec));
+        $(sec).appendTo($(colsHost));
+        There.data.dnaCurBody = secBody;
+      }
+      There.buildDnaSlider(There.data.dnaCurBody, spec, looks);
+    }
+    // skin tone section (featurecolor), the 10 named There tones
+    const skinWrap = $('<div class="dnaacc" data-open="0"></div>');
+    let skinHead = $('<div class="dnaacchead"></div>');
+    $('<span></span>').text('Skin tone').appendTo($(skinHead));
+    $('<span class="dnaacchevron"></span>').html(tmuiIcon('play')).appendTo($(skinHead));
+    $(skinHead).appendTo($(skinWrap));
+    let skinBody = $('<div class="dnaaccbody dnaskinbody"></div>');
+    let swatchRow = $('<div class="dnaskins"></div>');
+    There.DNA_SKINS.forEach(function(tone, i) {
+      const index = i + 1;
+      let sw = $('<div class="dnaskin"></div>').attr('title', tone.name).css('background-color', tone.color);
+      if (looks.skin == index) {
+        $(sw).attr('data-selected', '1');
+      }
+      $(sw).on('click', function() {
+        if (!There.dnaState().treatments) {
+          return;
+        }
+        There.playSound('control down');
+        $('.dnaskins .dnaskin').attr('data-selected', '0');
+        $(sw).attr('data-selected', '1');
+        There.data.dnaDirty = true;
+        There.dnaCommit([{
+          command: 'setFeatureColorIndex',
+          query: { index: index, bodyChangeCategory: 'skincolor' },
+        }]);
+      });
+      $(sw).appendTo($(swatchRow));
+    });
+    $(swatchRow).appendTo($(skinBody));
+    $(skinBody).appendTo($(skinWrap));
+    $(skinWrap).appendTo($(cols));
+
+    $('.dnaacc').first().attr('data-open', '1');
+    There.setNamedTimer('dna-fit', 30, function() {
+      $('.dnaacc[data-open="1"] .dnaslider').each(function() {
+        const fn = $(this).data('dnaRefresh');
+        if (fn) {
+          fn();
+        }
+      });
+    });
+    $('.dnaacchead').off('click.dna').on('click.dna', function() {
+      There.playSound('control down');
+      const acc = $(this).closest('.dnaacc');
+      const open = $(acc).attr('data-open') == '1' ? '0' : '1';
+      // accordion: only one section open at a time
+      $('.dnaacc').attr('data-open', '0');
+      $(acc).attr('data-open', open);
+      if (open == '1') {
+        $(acc).find('.dnaslider').each(function() {
+          const fn = $(this).data('dnaRefresh');
+          if (fn) {
+            fn();
+          }
+        });
+      }
+    });
+    There.drawDnaFigure();
+    There.data.dnaGateSig = null;
+    There.updateDnaGate();
+  },
+
+  /* ------- the live preview silhouette -------
+   * A stylized outline, not a render: each slider nudges the shape the way it
+   * nudges the avatar, so you can see roughly what you are doing before the
+   * world catches up. Pure SVG, redrawn whole on every change. */
+
+  drawDnaFigure: function() {
+    const el = $('.grid .dnafig')[0];
+    if (!el) {
+      return;
+    }
+    const vals = There.data.dnaValues || {};
+    const v = function(id) {
+      return vals[id] || 0;
+    };
+    const clamp = function(x, lo, hi) {
+      return Math.min(hi, Math.max(lo, x));
+    };
+    const female = (There.data.dnaLooks || {}).skeleton == 'ft0';
+
+    // head: 0..1 weights widen or stretch the skull, pairs give net effects
+    const headW = 11 * (1 + 0.30 * v('round') + 0.20 * v('square') + 0.15 * v('wedge') - 0.10 * v('pyramid'));
+    const headH = 14 * (1 + 0.35 * v('tall'));
+    const jaw = clamp(0.5 + 0.5 * v('jawsquare'), 0.5, 1);
+    const chinNet = v('chinthicker') - v('chinthinner');
+    const cheeks = v('cheeks');
+
+    // body: shoulders from the upper body morph, waist from weight, hips from
+    // the lower body morph, limbs thicken with muscle
+    const upper = clamp(Math.abs(v('phenod')) + Math.abs(v('phenoa')), 0, 1);
+    const lower = clamp(Math.abs(v('phenob')), 0, 1);
+    const weight = clamp(v('sibb'), 0, 1);
+    const muscle = clamp((v('sibc') + 0.5) / 1.5, 0, 1);
+
+    const shoulderW = (female ? 20 : 24) * (1 + 0.40 * upper + 0.15 * muscle);
+    const waistW = (female ? 11 : 14) * (1 + 0.95 * weight + 0.15 * muscle);
+    const hipW = (female ? 17 : 15) * (1 + 0.55 * lower + 0.45 * weight);
+    const armW = 4.2 * (1 + 0.9 * muscle + 0.3 * weight);
+    const legW = 6 * (1 + 0.5 * muscle + 0.5 * weight);
+
+    const cx = 60;
+    const headTop = 8;
+    const headCy = headTop + headH;
+    const neckY = headCy + headH * 0.9;
+    const shY = neckY + 8;
+    const waistY = 118;
+    const hipY = 138;
+    const footY = 236;
+
+    // face hints: eyes, nose, mouth follow their sliders
+    const eyeGap = 4.2 * (1 + 0.6 * v('eyesapart'));
+    const eyeR = 1.5 * (1 + 0.5 * (v('eyesbigger') - v('eyessmaller')));
+    const eyeTilt = 1.6 * v('eyetilt');
+    const noseL = 4 * (1 + 0.6 * v('noselonger'));
+    const noseW = 1.4 * (1 + 0.8 * v('nosewider'));
+    const mouthW = 5.5 * (1 - 0.45 * v('mouthsmaller'));
+    const lipT = 1 + 1.4 * clamp(v('lipsthicker') - v('lipsthinner'), -0.5, 1);
+
+    const chinY = headCy + headH * (0.98 + 0.06 * clamp(chinNet, -1, 1));
+    const jawW = headW * (0.55 + 0.35 * jaw + 0.12 * cheeks);
+
+    const p = [];
+    // head outline: dome plus jaw taper to the chin
+    p.push(`M ${cx - headW} ${headCy}`);
+    p.push(`A ${headW} ${headH} 0 1 1 ${cx + headW} ${headCy}`);
+    p.push(`Q ${cx + jawW} ${chinY - 2} ${cx} ${chinY + 3}`);
+    p.push(`Q ${cx - jawW} ${chinY - 2} ${cx - headW} ${headCy}`);
+    const head = p.join(' ');
+
+    // torso: shoulders, waist pinch, hips; mirrored
+    const torso = [
+      `M ${cx - shoulderW} ${shY}`,
+      `Q ${cx - shoulderW - 2} ${shY + 16} ${cx - waistW} ${waistY}`,
+      `Q ${cx - hipW - 1} ${hipY - 6} ${cx - hipW} ${hipY}`,
+      `L ${cx + hipW} ${hipY}`,
+      `Q ${cx + hipW + 1} ${hipY - 6} ${cx + waistW} ${waistY}`,
+      `Q ${cx + shoulderW + 2} ${shY + 16} ${cx + shoulderW} ${shY}`,
+      `Q ${cx} ${shY - 7} ${cx - shoulderW} ${shY}`,
+    ].join(' ');
+
+    const arm = function(side) {
+      const sx = cx + side * (shoulderW - 1);
+      const ex = cx + side * (shoulderW + 7);
+      return `M ${sx} ${shY + 2} Q ${ex} ${(shY + waistY) / 2} ${cx + side * (waistW + 12)} ${hipY + 8}`;
+    };
+    const leg = function(side) {
+      const sx = cx + side * (hipW * 0.5);
+      return `M ${sx} ${hipY} Q ${cx + side * (hipW * 0.55)} ${(hipY + footY) / 2} ${cx + side * (hipW * 0.38)} ${footY}`;
+    };
+
+    const eyeY = headCy - headH * 0.05;
+    const face = [
+      `<ellipse class="df-eye" cx="${cx - eyeGap}" cy="${eyeY + eyeTilt}" rx="${eyeR}" ry="${eyeR * 0.75}"></ellipse>`,
+      `<ellipse class="df-eye" cx="${cx + eyeGap}" cy="${eyeY - eyeTilt}" rx="${eyeR}" ry="${eyeR * 0.75}"></ellipse>`,
+      `<path class="df-line" d="M ${cx} ${eyeY + 2} L ${cx - noseW} ${eyeY + 2 + noseL} L ${cx + noseW} ${eyeY + 2 + noseL}"></path>`,
+      `<path class="df-lip" style="stroke-width:${lipT}" d="M ${cx - mouthW} ${chinY - 4} Q ${cx} ${chinY - 2.5} ${cx + mouthW} ${chinY - 4}"></path>`,
+    ].join('');
+
+    el.innerHTML =
+      `<path class="df-body" d="${torso}"></path>` +
+      `<path class="df-limb" style="stroke-width:${armW}" d="${arm(-1)}"></path>` +
+      `<path class="df-limb" style="stroke-width:${armW}" d="${arm(1)}"></path>` +
+      `<path class="df-limb" style="stroke-width:${legW}" d="${leg(-1)}"></path>` +
+      `<path class="df-limb" style="stroke-width:${legW}" d="${leg(1)}"></path>` +
+      `<path class="df-head" d="${head}"></path>` +
+      face;
+  },
+
+  buildDnaSlider: function(host, spec, looks) {
+    let row = $('<div class="dnarow"></div>');
+    $('<div class="dnalabel"></div>').text(spec.label).appendTo($(row));
+    let track = $('<div class="dnaslider"></div>');
+    let knob = $('<div class="dnaknob"></div>');
+    $(knob).appendTo($(track));
+    $(track).appendTo($(row));
+    $(row).appendTo($(host));
+
+    // measured live: the accordion may be collapsed (width 0) at build time
+    const width = function() { return Math.max(80, ($(track).width() || 150) - 11); };
+    const state = {
+      ids: spec.ids,
+      cats: spec.cat.split(','),
+      reverse: !!spec.reverse,
+      envelopes: spec.envelope,
+      multipliers: spec.multiplier || spec.ids.map(() => 1),
+      values: spec.ids.map(function(id) {
+        const a = looks.attributes[id];
+        return a ? a.value : 0;
+      }),
+    };
+
+    // position from values: the stock ChangeMe math, ported as is
+    const refresh = function() {
+      let value = 0.0;
+      if (state.envelopes != undefined) {
+        const envelope = state.envelopes[0];
+        const count = envelope.length - 1;
+        const step = 1.0 / count;
+        value = state.values[0] * state.multipliers[0];
+        let i0 = 0;
+        let i1 = 0;
+        for (let i = 0; i <= count; i++) {
+          i0 = i;
+          i1 = Math.min(i + 1, count);
+          if (value >= envelope[i0] && value < envelope[i1]) {
+            break;
+          }
+        }
+        const t = i0 == i1 ? 0.0 : (value - envelope[i0]) / (envelope[i1] - envelope[i0]);
+        value = (i0 + t) * step;
+      } else if (state.values.length == 1) {
+        value = state.values[0];
+      } else {
+        if (state.values.filter(e => e != 0.0).length > 1) {
+          return;
+        }
+        value = 0.5 - state.values[0] / 2.0 + state.values[1] / 2.0;
+      }
+      if (state.reverse) {
+        value = 1.0 - value;
+      }
+      const frac = Math.min(Math.max(0, value), 1);
+      $(knob).css('left', frac * width() + 'px');
+      $(track).css('--fill', (frac * 100) + '%');
+    };
+    $(track).data('dnaRefresh', refresh);
+
+    // values from position, same stock math
+    const split = function() {
+      let value = parseFloat($(knob).css('left')) / width();
+      if (state.reverse) {
+        value = 1.0 - value;
+      }
+      if (state.envelopes != undefined) {
+        for (const index in state.envelopes) {
+          const envelope = state.envelopes[index];
+          const count = envelope.length - 1;
+          const step = 1.0 / count;
+          const i0 = Math.floor(value * count);
+          const i1 = Math.min(i0 + 1, count);
+          const t1 = (value - i0 * step) / step;
+          state.values[index] = (envelope[i0] * (1.0 - t1) + envelope[i1] * t1) * state.multipliers[index];
+        }
+      } else if (state.values.length == 1) {
+        state.values[0] = value;
+      } else {
+        const v = (value - 0.5) * 2.0;
+        state.values[0] = v < 0.0 ? -v : 0.0;
+        state.values[1] = v > 0.0 ? v : 0.0;
+      }
+    };
+
+    const commit = function() {
+      const items = [];
+      for (const cat of state.cats) {
+        state.ids.forEach(function(id, index) {
+          const attr = There.data.dnaLooks.attributes[(cat == 'hair' ? 'hair_' : '') + id];
+          if (!attr) {
+            return;
+          }
+          attr.value = state.values[index];
+          items.push({
+            command: attr.setter,
+            query: { name: attr.name, weight: state.values[index], bodyChangeCategory: cat },
+          });
+        });
+      }
+      state.ids.forEach(function(id, index) {
+        for (const cat of state.cats) {
+          There.data.dnaValues[(cat == 'hair' ? 'hair_' : '') + id] = state.values[index];
+        }
+      });
+      There.drawDnaFigure();
+      if (items.length) {
+        There.data.dnaDirty = true;
+        There.dnaCommit(items);
+      }
+    };
+
+    let drag = null;
+    $(knob).on('mousedown', function(event) {
+      if (event.which == 1 && There.dnaState().treatments) {
+        drag = { dx: event.pageX - parseFloat($(knob).css('left')) };
+        event.stopPropagation();
+        event.preventDefault();
+      }
+    });
+    $(document).on('mousemove.dna' + spec.ids[0], function(event) {
+      if (drag) {
+        const nx = Math.min(Math.max(0, event.pageX - drag.dx), width());
+        $(knob).css('left', nx + 'px');
+        $(track).css('--fill', (nx / width() * 100) + '%');
+        split();
+        state.ids.forEach(function(id, index) {
+          There.data.dnaValues[id] = state.values[index];
+        });
+        There.drawDnaFigure();
+      }
+    }).on('mouseup.dna' + spec.ids[0], function() {
+      if (drag) {
+        drag = null;
+        split();
+        commit();
+      }
+    });
+    $(track).on('mousedown', function(event) {
+      if (event.which == 1 && !drag && There.dnaState().treatments) {
+        const nx2 = Math.min(Math.max(0, event.offsetX - 5), width());
+        $(knob).css('left', nx2 + 'px');
+        $(track).css('--fill', (nx2 / width() * 100) + '%');
+        split();
+        commit();
+        event.stopPropagation();
+      }
+    });
+    refresh();
+  },
+
+  // the dock asks, the headless ChangeMe window does
+  dnaCommit: function(items) {
+    try {
+      localStorage.setItem('tmui-dna-cmd', JSON.stringify({ seq: Date.now() + Math.random(), items: items }));
+    } catch (error) {
+    }
+  },
+
+  updateDnaGate: function() {
+    const gate = $('.grid .dnagate');
+    if (!gate.length) {
+      return;
+    }
+    const st = There.dnaState();
+    // a leave request is only real if it just happened; stale ones in storage
+    // must never force anyone out of the spa
+    if (st.leaveAsk && Date.now() - st.leaveAsk > 25000) {
+      st.leaveAsk = 0;
+    }
+    const note = (There.data.dnaNote && Date.now() < There.data.dnaNote.until) ? There.data.dnaNote.text : '';
+    const leaving = ((st.leaveAsk && There.data.dnaLeaveSeen != st.leaveAsk) || There.data.dnaCloseAsk) && (There.data.dnaDirty || There.data.dnaCloseAsk);
+    if (!leaving) {
+      There.data.dnaLeaveAlerted = false;
+      $(gate).attr('data-alert', '');
+    }
+    const sig = [st.alive, st.treatments, st.looksetPoid, st.leaveAsk, !!There.data.dnaDirty, !!There.data.dnaCloseAsk, note].join('|');
+    if (sig == There.data.dnaGateSig) {
+      return;
+    }
+    There.data.dnaGateSig = sig;
+    $('.grid .dnahost').attr('data-locked', st.treatments ? '0' : '1');
+    $(gate).empty();
+    if (note) {
+      $(gate).attr('data-on', '1');
+      $('<span></span>').text(note).appendTo($(gate));
+      return;
+    }
+    // walking off the spa or closing the wardrobe with unsaved changes:
+    // offer the save first
+    const closing = !!There.data.dnaCloseAsk;
+    if ((st.leaveAsk && There.data.dnaLeaveSeen != st.leaveAsk) || closing) {
+      if (!There.data.dnaDirty && !closing) {
+        There.data.dnaLeaveSeen = st.leaveAsk;
+        There.dnaLeaveNow();
+      } else {
+        $(gate).attr('data-on', '1').attr('data-alert', '1');
+        // alert the player: this prompt is holding them at the spa
+        if (!There.data.dnaLeaveAlerted) {
+          There.data.dnaLeaveAlerted = true;
+          There.playSound('dialog appear');
+        }
+        const ln = (There.data.dnaLookset && There.data.dnaLookset.name) || st.looksetName;
+        $('<span></span>').text('Leaving the spa. Save your new look' +
+          (ln ? ` to "${ln}"` : '') + '?').appendTo($(gate));
+        let btns = $('<span class="dnagatebtns"></span>');
+        const finish = function() {
+          There.data.dnaLeaveSeen = st.leaveAsk || There.data.dnaLeaveSeen;
+          There.dnaLeaveNow();
+          if (closing) {
+            There.closePanel(true);
+          }
+        };
+        $('<span class="dnabtn"></span>').text('Save & leave').on('click', function() {
+          There.dnaNoteShow('Saving your look\u2026', 6000);
+          There.dnaSaveLookset(function(ok, why) {
+            There.dnaNoteShow(ok ? 'Saved. See you around!' : `Save failed (${why}), leaving anyway.`, 5000);
+            finish();
+          });
+        }).appendTo($(btns));
+        $('<span class="dnabtn"></span>').text('Leave without saving').on('click', function() {
+          There.data.dnaDirty = false;
+          finish();
+        }).appendTo($(btns));
+        $(btns).appendTo($(gate));
+        return;
+      }
+    }
+    if (st.treatments) {
+      $(gate).attr('data-on', '1');
+      $('<span></span>').text('Spa unlocked. Changes apply right away.').appendTo($(gate));
+      const lookset = There.data.dnaLookset;
+      if (lookset === undefined) {
+        There.dnaCurrentLookset(function() {
+          There.data.dnaGateSig = null;
+          There.updateDnaGate();
+        });
+      }
+      if (lookset || st.looksetPoid) {
+        let btns = $('<span class="dnagatebtns"></span>');
+        let save = $('<span class="dnabtn"></span>').text(`Save to "${(lookset && lookset.name) || st.looksetName || 'lookset'}"`).on('click', function() {
+          There.dnaNoteShow('Saving your look\u2026', 8000);
+          There.dnaSaveLookset(function(ok, why) {
+            There.dnaNoteShow(ok ? 'Saved!' : `Save failed: ${why}`, 6000);
+          });
+        });
+        $(save).appendTo($(btns));
+        $(btns).appendTo($(gate));
+      }
+    } else if (st.alive) {
+      $(gate).attr('data-on', '0');
+      $('<span></span>').text('Viewing only. Step onto a spa platform to unlock editing.').appendTo($(gate));
+    } else {
+      $(gate).attr('data-on', '0');
+      $('<span></span>').text('Viewing only. Open ChangeMe or step onto a spa platform to unlock editing.').appendTo($(gate));
+    }
   },
 
   /* ------- Shop and Auctions panels -------
@@ -3185,23 +4441,23 @@ There.init({
           event.stopPropagation();
           There.playSound('control down');
           There.auSlideTo((There.data.auSlide || 0) - 1);
-          There.setNamedTimer('aucarousel', 5000, There.auAutoSlide);
+          There.setNamedTimer('aucarousel', 3500, There.auAutoSlide);
         }).appendTo($(car));
         $('<div class="aunav aunext"></div>').text('\u203A').on('click', function(event) {
           event.stopPropagation();
           There.playSound('control down');
           There.auSlideTo((There.data.auSlide || 0) + 1);
-          There.setNamedTimer('aucarousel', 5000, There.auAutoSlide);
+          There.setNamedTimer('aucarousel', 3500, There.auAutoSlide);
         }).appendTo($(car));
         // breathe while hovered
         $(car).on('mouseenter', function() {
           There.clearNamedTimer('aucarousel');
         }).on('mouseleave', function() {
-          There.setNamedTimer('aucarousel', 4000, There.auAutoSlide);
+          There.setNamedTimer('aucarousel', 2500, There.auAutoSlide);
         });
         $(car).appendTo($(body));
         There.data.auSlide = 0;
-        There.setNamedTimer('aucarousel', 4000, There.auAutoSlide);
+        There.setNamedTimer('aucarousel', 2500, There.auAutoSlide);
       }
       // "designer picks" in the feed are DESIGNERS, not auctions: name chips
       // that open everything that designer has listed
@@ -3254,7 +4510,7 @@ There.init({
   auAutoSlide: function() {
     if (There.data.panel == 'auctions' && $('.aucarousel').length) {
       There.auSlideTo((There.data.auSlide || 0) + 1);
-      There.setNamedTimer('aucarousel', 4000, There.auAutoSlide);
+      There.setNamedTimer('aucarousel', 2500, There.auAutoSlide);
     }
   },
 
@@ -4383,7 +5639,9 @@ There.init({
 
   // cards per chunk. folders + first chunk go in right away, more get appended
   // as you scroll. keeps DOM nodes and image lookups bounded on big inventories
-  CHUNK: 60,
+  CHUNK: 30,
+  // cards built per frame inside a chunk
+  CARD_SLICE: 10,
 
   renderCards: function(items) {
     There.clearItemMenu();
@@ -4423,15 +5681,28 @@ There.init({
       return;
     }
     const grid = $('.grid')[0];
-    const frag = document.createDocumentFragment();
+    // one slice per frame: a panel opening on hundreds of items never builds
+    // them all in one long block, the first slice paints while the rest follow
     const end = Math.min(pos + There.CHUNK, list.length);
-    for (; pos < end; pos++) {
+    const sliceEnd = Math.min(pos + There.CARD_SLICE, end);
+    const frag = document.createDocumentFragment();
+    for (; pos < sliceEnd; pos++) {
       frag.appendChild(There.buildCard(list[pos])[0]);
     }
     if (grid) {
       grid.appendChild(frag);
     }
     There.data.renderPos = pos;
+    if (pos < end) {
+      const list0 = list;
+      requestAnimationFrame(function() {
+        // a newer render replaced this list: stop
+        if (There.data.renderList === list0) {
+          There.renderChunk();
+        }
+      });
+      return;
+    }
     // still not filling the viewport (no scrollbar = no scroll event), keep going
     if (grid && pos < list.length && grid.scrollHeight <= grid.clientHeight + 4) {
       There.setNamedTimer('render-fill', 0, There.renderChunk);
@@ -4485,7 +5756,19 @@ There.init({
     // falls back to catalog when there's none
     (function(thumbEl, it) {
       const showUrl = function(url) {
-        $(thumbEl).css('background-image', `url("${url}")`).text('');
+        // a real lazy img, not a background: the browser then fetches and
+        // decodes only what scrolls into view, off the render path, instead
+        // of bursting on every chunk (the wardrobe ALL scroll hitches)
+        const img = $('<img class="thumbimg" alt="">')
+          .attr('loading', 'lazy').attr('decoding', 'async').attr('src', url);
+        // the picture store couldn't get it: straight from There instead
+        $(img).one('error', function() {
+          const direct = CatalogImages.fallbackUrl(this.src);
+          if (direct) {
+            this.src = direct;
+          }
+        });
+        $(thumbEl).empty().append(img);
       };
       const localIcon = (it.icon && /\.(png|jpg|jpeg|gif)$/i.test(it.icon))
         ? `http://${host}/resources/${it.icon}` : null;
@@ -5780,6 +7063,9 @@ There.init({
           const changed = sig !== There.data.invSig;
           There.data.invSig = sig;
           There.data.inventory = items;
+          if (changed) {
+            There.prefetchPhotos();
+          }
           done(changed, false);
         });
       },
@@ -6175,7 +7461,10 @@ There.init({
     const chatWay = There.data.chatRelayAt ? ' · chat via Command Bar' : (There.data.chatPollOn ? ' · chat direct' : '');
     const pinned = There.data.shapeOn ? ' · window pinned' : '';
     const spd = There.data.speedoNote ? ` · speedo: ${There.data.speedoNote}` : '';
-    $('.syncstatus').text(`${inv} items · ${acc} clothing · ${map} action paths · updated ${hh}:${mm}${chatWay}${pinned}${spd}`);
+    const lp = There.data.lastPause;
+    const wp = There.data.worstPause;
+    const pause = lp ? ` · last pause ${lp.ms}ms (${lp.what}), worst ${wp.ms}ms (${wp.what})` : ' · no pauses';
+    $('.syncstatus').text(`${inv} items · ${acc} clothing · ${map} action paths · updated ${hh}:${mm}${chatWay}${pinned}${spd}${pause}`);
   },
 
   /* ------- unified folder view (inventory + wardrobe categories) -------
@@ -6265,6 +7554,14 @@ There.init({
 
   // tabs + grid (folders, then items) for the current level
   renderFolderView: function() {
+    // the DNA tab owns the grid while it is open, card renders would stomp it
+    if (There.data.panel == 'wardrobe' && There.data.wardrobeTab == 'dna') {
+      return;
+    }
+    // so does the Places map
+    if (There.data.panel == 'places' && There.data.placesTab == 'map') {
+      return;
+    }
     There.renderFolderTabs();
     There.renderCards(There.itemsAtCurrentLevel());
   },
@@ -6307,6 +7604,10 @@ There.init({
       prefs.gifs = raw.gifs !== false;
       // speedometer while driving: default on
       prefs.speedo = raw.speedo !== false;
+      // the GPS screen beside it: default on
+      prefs.gps = raw.gps !== false;
+      // ...but folded to a button until opened
+      prefs.gpsOpen = raw.gpsOpen === true;
       // card size and view in the Shop and Auctions grids
       prefs.shopScale = (raw.shopScale >= 110 && raw.shopScale <= 230) ? raw.shopScale : 150;
       prefs.shopView = raw.shopView == 'list' ? 'list' : 'tile';
@@ -6353,6 +7654,13 @@ There.init({
 
   applyTheme: function() {
     const t = There.prefs().theme;
+    // re-setting the same colours restyles every element in the dock (hidden
+    // panels too) on each panel open: skip when nothing changed
+    const sig = JSON.stringify(t || null);
+    if (sig === There.data.themeSig) {
+      return;
+    }
+    There.data.themeSig = sig;
     const root = document.documentElement;
     // blend the accent into a dark base color, "r, g, b" out
     const mix = function(base, frac, hex) {
@@ -6473,6 +7781,14 @@ There.init({
 
   // show/hide dock buttons per prefs, dock auto-sizes its width
   applyDockPrefs: function() {
+    // the GPS screen rides inside the speedo cluster; the window shape must
+    // follow when it comes or goes
+    const gps = There.prefs().gps ? '1' : '0';
+    const gpsOpen = There.prefs().gps && There.prefs().gpsOpen ? '1' : '0';
+    if ($('.speedo').attr('data-gps') != gps || $('.speedo').attr('data-gpsopen') != gpsOpen) {
+      $('.speedo').attr('data-gps', gps).attr('data-gpsopen', gpsOpen);
+      There.syncWindowShape();
+    }
     for (const b of There.DOCK_BUTTONS) {
       $(`.dock .item[data-id="${b.id}"]`).attr('data-off', There.dockButtonOn(b.id) ? '' : '1');
     }
@@ -6549,6 +7865,7 @@ There.init({
     prefRow('Tbux balance', 'showTbux', '.appeartoggles');
     prefRow('Action Mode keys (WASD, Space, R)', 'keymap', '.controltoggles');
     prefRow('Speedometer when driving', 'speedo', '.behaviortoggles');
+    prefRow('GPS screen beside the speedometer', 'gps', '.behaviortoggles');
     prefRow('Close Inventory after an action', 'closeInv', '.behaviortoggles');
     prefRow('Close Wardrobe after an action', 'closeWard', '.behaviortoggles');
     prefRow('Close Emotes after sending one', 'closeEmotes', '.behaviortoggles');
@@ -6708,6 +8025,207 @@ There.init({
     return items;
   },
 
+  /* ------- Places: Favorites | Map -------
+   * The map is the GPS from gpsmaps.js: which island you're on, its picture,
+   * and a dot with your heading, refreshed once a second while it's open. */
+
+  renderPlacesTabs: function() {
+    const current = There.data.placesTab || 'list';
+    $('.dockroot').attr('data-placestab', current);
+    let tabs = $('.tabs');
+    $(tabs).empty();
+    for (const [id, name] of [['list', 'Favorites'], ['map', 'Map']]) {
+      let el = $('<div class="tab"></div>').text(name).attr('data-id', id);
+      if (id == current) {
+        $(el).attr('data-active', '1');
+      }
+      $(el).on('click', function() {
+        if (There.data.placesTab == id) {
+          return;
+        }
+        There.playSound('control down');
+        There.data.placesTab = id;
+        There.renderPlacesTabs();
+        if (id == 'map') {
+          There.drawMap();
+          There.mapTick();
+        } else {
+          There.renderFolderView();
+        }
+      });
+      $(el).appendTo($(tabs));
+    }
+  },
+
+  // where to read the position from: seated, our own position freezes and
+  // the vehicle's is the one that moves (the tacho already found it)
+  mapTick: function() {
+    if (There.data.panel != 'places' || There.data.placesTab != 'map') {
+      return;
+    }
+    const seated = $('.speedo').attr('data-active') == '1' && There.data.speedoVeh;
+    const doid = seated ? There.data.speedoVeh : There.data.pilotDoid;
+    if (!doid || !There.data.cockpitUp) {
+      $('.mapname').text('Waiting for the game…');
+      There.setNamedTimer('map', 1500, There.mapTick);
+      return;
+    }
+    There.fetch({
+      path: '/ScriptHook/Get',
+      query: { Path: `/thobs/${doid}/edprops/posOrDel/value` },
+      dataType: 'xml',
+      success: function(xml) {
+        const pos = There.parsePosOrDel(xml);
+        if (pos) {
+          There.data.mapPos = pos;
+          There.drawMap();
+        }
+      },
+      complete: function() {
+        There.setNamedTimer('map', 1000, There.mapTick);
+      },
+    });
+  },
+
+  // which map shows: 'auto' follows you island to island, 'main' is the
+  // world, 'global' the planet, an island id browses that island
+  setMapView: function(view) {
+    There.data.mapView = view;
+    There.mapResetZoom();
+    There.drawMap();
+  },
+
+  drawMap: function() {
+    const pos = There.data.mapPos;
+    const view = There.data.mapView || 'auto';
+    if (!pos) {
+      return;
+    }
+    const at = view == 'auto' ? TmuiMaps.locate(pos) : TmuiMaps.locateOn(pos, view);
+    if (!at) {
+      return;
+    }
+    const shown = at.id;
+    // the view changed under us (auto crossed onto another island): fresh zoom
+    if (There.data.mapShown != shown) {
+      There.data.mapShown = shown;
+      There.mapResetZoom();
+    }
+    // the world uses the full-size picture so it stays sharp when zoomed
+    const world = shown == 'main';
+    $('.mapworld').toggle(world);
+    $('.maplabels').toggle(world);
+    $('.mapimg').toggle(!world);
+    if (world) {
+      There.buildMapLabels();
+    } else {
+      const img = $('.mapimg')[0];
+      if (img && There.data.mapSrc != at.src) {
+        There.data.mapSrc = at.src;
+        img.src = at.src;
+      }
+    }
+    // the dot: always in 'auto', elsewhere only when you're on that map
+    const onMap = view == 'auto' || at.inside;
+    $('.mapdot').toggle(onMap);
+    if (onMap) {
+      const left = Math.max(0, Math.min(100, at.px / TmuiMaps.WIDTH * 100));
+      const top = Math.max(0, Math.min(100, at.py / TmuiMaps.HEIGHT * 100));
+      $('.mapdot').css({ left: left + '%', top: top + '%' });
+      $('.maparrow').css('transform', `rotate(${There.data.heading || 0}deg)`);
+      There.data.mapDot = { x: left / 100, y: top / 100 };
+      // following you while zoomed in on 'Here', unless you just dragged
+      if (view == 'auto' && (There.data.mapZoom || 1) > 1 &&
+          Date.now() - (There.data.mapDragAt || 0) > 3000) {
+        There.mapCentreOn(There.data.mapDot);
+      }
+    }
+    $('.mapname').text(onMap ? at.name : `${at.name} · you're elsewhere`);
+    const ew = at.surface.x >= 0 ? 'E' : 'W';
+    const ns = at.surface.y >= 0 ? 'N' : 'S';
+    $('.mapcoords').text(`${Math.abs(at.surface.x).toLocaleString()} ${ew} · ` +
+      `${Math.abs(at.surface.y).toLocaleString()} ${ns}`);
+    $('.mapview').each(function() {
+      $(this).attr('data-active', $(this).attr('data-view') == view ? '1' : '0');
+    });
+  },
+
+  // island names on the world map; click one to browse it
+  buildMapLabels: function() {
+    if (There.data.mapLabelsBuilt) {
+      return;
+    }
+    There.data.mapLabelsBuilt = true;
+    const host = $('.maplabels');
+    $(host).empty();
+    const wp = TmuiMaps.WORLD_PLACE;
+    $('.mapworld').css({
+      left: wp.x / TmuiMaps.WIDTH * 100 + '%',
+      top: wp.y / TmuiMaps.HEIGHT * 100 + '%',
+      width: wp.w / TmuiMaps.WIDTH * 100 + '%',
+      height: wp.h / TmuiMaps.HEIGHT * 100 + '%',
+    });
+    for (const spot of TmuiMaps.islandSpots()) {
+      $('<div class="maplabel"></div>').text(spot.name).css({
+        left: spot.px / TmuiMaps.WIDTH * 100 + '%',
+        top: spot.py / TmuiMaps.HEIGHT * 100 + '%',
+      }).on('click', function(event) {
+        event.stopPropagation();
+        There.playSound('menu item activate');
+        There.setMapView(spot.id);
+      }).on('mousedown', function(event) {
+        event.stopPropagation();
+      }).appendTo($(host));
+    }
+  },
+
+  /* map zoom: the stage scales from its top-left corner and pans so it
+     always covers the frame. the dot and labels counter-scale to stay put */
+
+  mapResetZoom: function() {
+    There.data.mapZoom = 1;
+    There.data.mapPanX = 0;
+    There.data.mapPanY = 0;
+    There.applyMapZoom();
+  },
+
+  applyMapZoom: function() {
+    const frame = $('.mapframe')[0];
+    if (!frame) {
+      return;
+    }
+    const z = There.data.mapZoom || 1;
+    const w = frame.clientWidth;
+    const h = frame.clientHeight;
+    There.data.mapPanX = Math.max(w - w * z, Math.min(0, There.data.mapPanX || 0));
+    There.data.mapPanY = Math.max(h - h * z, Math.min(0, There.data.mapPanY || 0));
+    $('.mapstage').css('transform', `translate(${There.data.mapPanX}px, ${There.data.mapPanY}px) scale(${z})`);
+    $('.mapframe').css('--mapz', z);
+  },
+
+  // zoom by a factor around a point in the frame (px from its top-left)
+  mapZoomAt: function(factor, cx, cy) {
+    const z = There.data.mapZoom || 1;
+    const nz = Math.max(1, Math.min(8, z * factor));
+    const k = nz / z;
+    There.data.mapPanX = cx - (cx - (There.data.mapPanX || 0)) * k;
+    There.data.mapPanY = cy - (cy - (There.data.mapPanY || 0)) * k;
+    There.data.mapZoom = nz;
+    There.applyMapZoom();
+  },
+
+  // put a spot (0..1 of the map) in the middle of the frame
+  mapCentreOn: function(spot) {
+    const frame = $('.mapframe')[0];
+    if (!frame || !spot) {
+      return;
+    }
+    const z = There.data.mapZoom || 1;
+    There.data.mapPanX = frame.clientWidth / 2 - spot.x * frame.clientWidth * z;
+    There.data.mapPanY = frame.clientHeight / 2 - spot.y * frame.clientHeight * z;
+    There.applyMapZoom();
+  },
+
   renderWardrobeTabs: function() {
     let tabs = $('.tabs');
     $(tabs).empty();
@@ -6734,6 +8252,16 @@ There.init({
   // (cached) and filters locally so tab switches are instant
   loadWardrobe: function(tabId) {
     const tab = There.wardrobeTabs.find(t => t.id == tabId) || There.wardrobeTabs[0];
+
+    // body and face shape editing (the old ChangeMe treatments)
+    if (tab.dna) {
+      $('.foldertabs').empty();
+      // no folders, card sizes or quick equip here: hide the footer chrome
+      $('.dockroot').attr('data-dna', '1');
+      There.renderDna();
+      return;
+    }
+    $('.dockroot').attr('data-dna', '0');
 
     // outfits/looksets come from their own pilotPobs container
     if (tab.pob) {
@@ -6944,6 +8472,7 @@ There.init({
         There.data.accoutrements = items;
         There.data.loadingAcc = false;
         There.fireAccDone();
+        There.prefetchPhotos();
         return;
       }
       while (active < CONCURRENCY && i < total) {
@@ -6974,6 +8503,8 @@ There.init({
     if (There.data.panel == 'inventory' && There.data.inventory) {
       There.renderCards(There.itemsAtCurrentLevel());
     } else if (There.data.panel == 'wardrobe') {
+      There.renderCards(There.itemsAtCurrentLevel());
+    } else if (There.data.panel == 'places') {
       There.renderCards(There.itemsAtCurrentLevel());
     }
   },
@@ -7010,6 +8541,23 @@ $(document).ready(function() {
 
   // drag the gauge cluster anywhere and remember the spot. while dragging, the
   // whole window takes the mouse so the pointer can't outrun the input shape
+  // the GPS button folds the screen open and shut (remembered). shut, it does
+  // no work at all
+  $('.spdgpsbtn').on('mousedown', function(event) {
+    event.stopPropagation();
+  }).on('click', function(event) {
+    event.stopPropagation();
+    const p = There.prefs();
+    p.gpsOpen = !p.gpsOpen;
+    There.savePrefs();
+    There.data.gps = null;
+    if (p.gpsOpen && There.data.speedoPrev) {
+      There.gpsFeed(There.data.speedoPrev.p);
+    }
+    There.playSound(p.gpsOpen ? 'open menu' : 'close menu');
+    There.applyDockPrefs();
+  });
+
   $('.speedo').on('mousedown', function(event) {
     if (event.which != 1) {
       return;
@@ -7177,6 +8725,79 @@ $(document).ready(function() {
       There.fsCommand('beginDragWindow');
       event.preventDefault();
     }
+  });
+
+  // Places map: view buttons, + and -, wheel zoom around the pointer, drag to
+  // pan, double-click to reset
+  $('.mapview').on('click', function() {
+    There.playSound('control down');
+    There.setMapView($(this).attr('data-view'));
+  }).on('mousedown', function(event) {
+    event.stopPropagation();
+  });
+  $('.mapzoom').on('click', function() {
+    const frame = $('.mapframe')[0];
+    const dir = Number($(this).attr('data-dir'));
+    There.playSound('control down');
+    There.mapZoomAt(dir > 0 ? 1.5 : 1 / 1.5, frame.clientWidth / 2, frame.clientHeight / 2);
+  }).on('mousedown', function(event) {
+    event.stopPropagation();
+  });
+  $('.mapframe').on('wheel', function(event) {
+    event.preventDefault();
+    const e = event.originalEvent;
+    const rect = this.getBoundingClientRect();
+    There.mapZoomAt(e.deltaY < 0 ? 1.25 : 1 / 1.25, e.clientX - rect.left, e.clientY - rect.top);
+  }).on('mousedown', function(event) {
+    if (event.which != 1) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const start = { x: event.pageX, y: event.pageY, px: There.data.mapPanX || 0, py: There.data.mapPanY || 0 };
+    $(document).on('mousemove.mapdrag', function(e) {
+      There.data.mapPanX = start.px + (e.pageX - start.x);
+      There.data.mapPanY = start.py + (e.pageY - start.y);
+      There.data.mapDragAt = Date.now();
+      There.applyMapZoom();
+    }).on('mouseup.mapdrag', function() {
+      $(document).off('.mapdrag');
+    });
+  }).on('dblclick', function() {
+    There.mapResetZoom();
+  });
+
+  // Volume panel: live while dragging (a few changes a second), exact on release
+  $('.volslider').on('input', function() {
+    const row = $(this).closest('.volrow');
+    const id = $(row).attr('data-id');
+    const pref = $(row).attr('data-pref');
+    const value = Number($(this).val()) / 100;
+    There.data.volDrag = id;
+    $(row).find('.volvalue').text(Math.round(value * 100) + '%');
+    There.setNamedTimer(`vol-set-${id}`, 120, function() {
+      There.volSend({ set: { pref: pref, value: value } });
+    });
+  }).on('change', function() {
+    const row = $(this).closest('.volrow');
+    const id = $(row).attr('data-id');
+    There.clearNamedTimer(`vol-set-${id}`);
+    There.volSend({ set: { pref: $(row).attr('data-pref'), value: Number($(this).val()) / 100 } });
+    There.playSound('control up');
+    // let the game's answer land before reports may move this slider again
+    There.setNamedTimer('vol-drag-end', 400, function() {
+      There.data.volDrag = null;
+    });
+  }).on('mousedown', function(event) {
+    There.playSound('control down');
+    event.stopPropagation();
+  });
+
+  $('.volmute').on('click', function() {
+    There.playSound('control down');
+    There.volSend({ toggleMute: true });
+  }).on('mousedown', function(event) {
+    event.stopPropagation();
   });
 
   // chunked rendering: more cards as the grid nears the bottom
@@ -7498,6 +9119,96 @@ $(document).ready(function() {
   // message bar auto-accepted an Action Mode prompt (e.g. gun out), so Action
   // Mode may have changed behind our back. re-read it
   window.addEventListener('storage', function(event) {
+    // the headless volume window reporting its levels
+    if (event.key == 'tmui-vol') {
+      let st = null;
+      try {
+        st = JSON.parse(event.newValue || 'null');
+      } catch (error) {
+      }
+      There.onVolState(st);
+      return;
+    }
+    // the headless ChangeMe engine: a spa unlock pulls the DNA tab up
+    if (event.key == 'tmui-dna') {
+      let st = null;
+      try {
+        st = JSON.parse(event.newValue || 'null');
+      } catch (error) {
+      }
+      // the shim finished a save we asked for
+      if (st && st.saveResult && There.data.dnaSaveCb && st.saveResult.at >= There.data.dnaSaveStart) {
+        const pending = There.data.dnaSaveCb;
+        There.data.dnaSaveCb = null;
+        There.clearNamedTimer('dna-save-timeout');
+        There.data.dnaDirty = !st.saveResult.ok;
+        pending(st.saveResult.ok, st.saveResult.ok ? '' : 'game said no: ' + (st.saveResult.raw || 'no detail'));
+      }
+      const wasAlive = Date.now() - (There.data.dnaAliveAt || 0) < 6000;
+      if (st && st.open) {
+        There.data.dnaAliveAt = st.at;
+      }
+      // the window just opened (ChangeMe menu or a spa): the dock takes over.
+      // a new boot id is the real signal; the liveness gap is only a fallback
+      // for an old shim, because hidden pages get their timers throttled and a
+      // late heartbeat must not yank the player back to the wardrobe
+      const justOpened = st && st.open &&
+        (st.boot ? There.data.dnaBootSeen != st.boot : !wasAlive);
+      if (st && st.boot && st.open) {
+        There.data.dnaBootSeen = st.boot;
+      }
+      if (justOpened) {
+        There.playSound('menu item activate');
+        if (st.treatments) {
+          There.data.wardrobeTab = 'dna';
+        }
+        if (There.data.panel != 'wardrobe') {
+          There.togglePanel('wardrobe');
+        } else {
+          There.renderWardrobeTabs();
+          There.loadWardrobe(There.data.wardrobeTab);
+        }
+      } else if (st && st.open && st.treatments && !There.data.dnaAnnounced) {
+        // already open when the spa unlocked: jump to the DNA tab
+        There.data.dnaAnnounced = true;
+        There.data.wardrobeTab = 'dna';
+        if (There.data.panel != 'wardrobe') {
+          There.togglePanel('wardrobe');
+        } else {
+          There.renderWardrobeTabs();
+          There.loadWardrobe('dna');
+        }
+      }
+      if (st && (!st.open || !st.treatments)) {
+        There.data.dnaAnnounced = false;
+      }
+      // the player stepped off the spa platform: a new leave request must pull
+      // the DNA tab back to the front so the save / leave prompt is actually
+      // seen, wherever they navigated to in the meantime
+      if (st && st.leaveAsk && There.data.dnaLeaveSeen != st.leaveAsk) {
+        const fresh = Date.now() - st.leaveAsk < 25000;
+        const needPrompt = There.data.dnaDirty;
+        if (fresh && needPrompt) {
+          if (There.data.panel != 'wardrobe' || There.data.wardrobeTab != 'dna') {
+            There.data.wardrobeTab = 'dna';
+            if (There.data.panel != 'wardrobe') {
+              There.togglePanel('wardrobe');
+            } else {
+              There.renderWardrobeTabs();
+              There.loadWardrobe('dna');
+            }
+          }
+        } else if (fresh && !needPrompt) {
+          // nothing to save, just release them
+          There.data.dnaLeaveSeen = st.leaveAsk;
+          There.dnaLeaveNow();
+        }
+      }
+      if (There.data.panel == 'wardrobe' && There.data.wardrobeTab == 'dna') {
+        There.updateDnaGate();
+      }
+      return;
+    }
     // message bar saw something (purchase, gift, trade...): sync shortly
     if (event.key == 'tmui-msg-activity' && There.data.syncStarted) {
       There.setNamedTimer('activity-sync', 1500, function() {

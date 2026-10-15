@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<!-- ThereModernUI - docs/freeze-fix.html. Under-the-hood article on taming the 8 second freeze. Author: DANKIES -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taming the 8 second freeze - ThereModernUI</title>
+<meta name="description" content="Under the hood: why the There.com client freezes for 8 seconds on Windows 11, and how ThereModernUI makes it noticeably smoother.">
+<meta property="og:title" content="Taming the 8 second freeze">
+<meta property="og:description" content="Why the There.com client rubberbands on Windows 11, and how ThereModernUI makes it noticeably smoother.">
+<meta property="og:image" content="assets/tmui-square.png">
+<link rel="icon" href="assets/tmui-square.png">
+<style>
+:root {
+  --bg: #0b0e13;
+  --bg2: #11151c;
+  --panel: rgba(17, 21, 28, 0.92);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --text: #e8edf2;
+  --dim: #93a1ae;
+  --accent: #38bdf8;
+  --accent-bright: #bae6fd;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.7 'Segoe UI', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+
+/* nav */
+nav {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(11, 14, 19, 0.8);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+nav .wrap { display: flex; align-items: center; gap: 22px; height: 58px; }
+nav .brand img { height: 22px; display: block; }
+nav .links { display: flex; gap: 20px; margin-left: auto; font-size: 14px; }
+nav .links a { color: var(--dim); }
+nav .links a:hover { color: var(--text); text-decoration: none; }
+@media (max-width: 720px) { nav .links a.hide-sm { display: none; } }
+
+/* buttons */
+.btn {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 11px 20px; border-radius: 12px;
+  font-weight: 700; font-size: 15px;
+  border: 1px solid var(--border-strong);
+  color: var(--text); background: rgba(255, 255, 255, 0.05);
+  cursor: pointer; transition: transform 120ms ease, filter 120ms ease;
+}
+.btn:hover { text-decoration: none; transform: translateY(-1px); }
+.btn.primary { background: var(--accent); color: #07131c; border-color: transparent; box-shadow: 0 8px 30px color-mix(in srgb, var(--accent) 35%, transparent); }
+.btn.primary:hover { filter: brightness(1.08); }
+
+/* article */
+.article { max-width: 760px; margin: 0 auto; padding: 60px 20px 40px; }
+.kicker { color: var(--accent); font-weight: 700; font-size: 13px; letter-spacing: 1.2px; text-transform: uppercase; }
+.article h1 { font-size: clamp(26px, 4vw, 38px); line-height: 1.2; margin: 8px 0 8px; letter-spacing: -0.5px; }
+.article .byline { color: var(--dim); font-size: 13px; margin-bottom: 34px; }
+.article h2 { font-size: 22px; margin: 42px 0 10px; letter-spacing: -0.3px; }
+.article p { color: var(--text); margin: 0 0 16px; }
+.article p.dim { color: var(--dim); }
+.article ul { margin: 0 0 16px; padding-left: 22px; }
+.article li { margin-bottom: 8px; }
+.article code {
+  font: 13px/1.5 Consolas, 'Cascadia Mono', monospace;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+blockquote {
+  margin: 20px 0;
+  padding: 14px 18px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: rgba(56, 189, 248, 0.06);
+  color: var(--dim);
+  font-style: italic;
+}
+blockquote .who { display: block; margin-top: 8px; font-style: normal; font-size: 12px; color: var(--accent-bright); }
+.article pre {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+}
+.article pre code { border: none; background: none; padding: 0; }
+table.evidence { width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 14px; }
+table.evidence th, table.evidence td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+table.evidence th { color: var(--dim); font-weight: 600; }
+.note {
+  margin: 24px 0;
+  padding: 14px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dim);
+  font-size: 14px;
+}
+.note b { color: var(--text); }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; margin: 36px 0 10px; }
+
+footer { padding: 40px 0 60px; border-top: 1px solid var(--border); color: var(--dim); font-size: 13px; }
+footer .wrap { display: flex; gap: 20px; justify-content: space-between; flex-wrap: wrap; align-items: center; }
+footer img { height: 18px; opacity: 0.8; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/tmui-logo.png" alt="TMUI"></a>
+    <div class="links">
+      <a href="index.html#demo">Live demo</a>
+      <a href="index.html#features" class="hide-sm">Features</a>
+      <a href="index.html#install">Install</a>
+      <a href="https://github.com/Kronzy0nButtons/ThereModernUI" class="hide-sm">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="kicker">Under the hood</div>
+  <h1>Taming the 8 second freeze</h1>
+  <div class="byline">Why the client rubberbands on Windows 11, and what ThereModernUI does about it</div>
+
+  <p>If you have played There on Windows 11 since September, you know the feeling: you teleport somewhere, or a message comes in, and the whole world locks up. Your avatar rubberbands, chat stalls, and roughly eight seconds later everything snaps back as if nothing happened.</p>
+
+  <p>This is not your PC and it is not your connection. The There team investigated it and published what they found. In their own words:</p>
+
+  <blockquote>
+    "Something in the Windows 11 update causes these Edge components to freeze for 8 seconds whenever There Edge requests a file - a HTML file, an image, Javascript, etc. [...] When the Edge component freezes it also causes the There 3D client to freeze, which results in the rubberbanding."
+    <span class="who">There.com, official changelog</span>
+  </blockquote>
+
+  <p>Their advice while waiting on Microsoft was to keep the MessageBar, ChangeMe, Compass and FunFinder closed, with the warning that every teleport and MessageBar update opens one of those windows anyway. In other words: the only known workaround was to not use the UI.</p>
+
+  <p>ThereModernUI 1.0.6 makes this noticeably better. Not by waiting for Microsoft, but by changing how those windows load their files in the first place. Here is the full story, including what it can and can't do.</p>
+
+  <h2>How the UI windows actually work</h2>
+
+  <p>When Flash died, the There team rebuilt the old Flash controls as small embedded browser windows, a system they call There Edge. Each control, the Compass, the MessageBar, ChangeMe, FunFinder, the teleport screen, is a little web page running inside a Microsoft Edge (WebView2) window that floats over the game. The component that hosts all of those windows is a file in your There folder called <code>FlashProxy.dll</code>, and the There team generously published its source code as open source.</p>
+
+  <p>That last part matters, because ThereModernUI already rebuilds that component from source to power its own features. The same windows that run the ModernUI dock also run the stock controls. So when the freeze bug appeared, we were in an unusual position: we ship the exact piece of the client where the bug lives.</p>
+
+  <h2>What actually freezes, and why it takes the world with it</h2>
+
+  <p>A game client has a main thread: one worker that runs the simulation, pumps messages, and draws the world, over and over, many times a second. Anything that runs on that thread stops the world while it runs. That is fine when everything on it is fast.</p>
+
+  <p>Here is the catch we found in the There Edge source. Every file one of those UI windows requests, its page, its scripts, its images, its sounds, is intercepted by the host and fetched through an old piece of Windows plumbing called URLMon, and that fetch runs <b>on the game's main thread</b>. Picture a cashier who personally walks to the warehouse for every single item: the queue stands still until they come back.</p>
+
+  <p>For years that was harmless, because the warehouse was fast. Then a Windows 11 update made that plumbing stall. Now every trip can take about eight seconds, and the game stands in that queue every time. That explains everything the There team observed:</p>
+
+  <ul>
+    <li><b>Why a UI window freezes the 3D world:</b> the world and the file fetch share the same thread.</li>
+    <li><b>Why keeping windows closed helps:</b> closed windows request no files.</li>
+    <li><b>Why every teleport freezes:</b> teleporting opens the slideshow window, which loads its files.</li>
+    <li><b>Why it is worst on fresh content:</b> files already in the browser cache never reach the slow path, new ones always do.</li>
+  </ul>
+
+  <h2>The fix: never make the game wait for a file</h2>
+
+  <p>ThereModernUI's rebuilt <code>FlashProxy.dll</code> adds what we call the file lane. When a UI window asks for a static file, a page, a script, an image, a font, a sound, the request is handed to a background worker thread. The game's main thread moves on immediately. When the file is ready, the worker hands it back and the window carries on loading.</p>
+
+  <p>The file lane does two things at once:</p>
+
+  <ul>
+    <li><b>It disconnects the freeze from the game.</b> Even if Windows stalls a fetch, it stalls a background helper. The simulation never stands in that queue again, so the world cannot rubberband because of it.</li>
+    <li><b>It skips the broken plumbing entirely.</b> Those static files are ordinary files on disk, sitting right next to the client. The worker reads them directly instead of going through URLMon at all, so loads are not just non-blocking, they are faster.</li>
+  </ul>
+
+  <p>And because everything the devs listed, Compass, MessageBar, ChangeMe, FunFinder, plus the teleport slideshow, runs inside the one component we rebuild, the fix covers all of them. Including the stock windows ModernUI does not reskin.</p>
+
+  <h2>The evidence</h2>
+
+  <p>None of this is guesswork. There Edge is open source, so the whole chain can be read, and the built files can be checked.</p>
+
+  <p><b>The stock code fetches every file through URLMon.</b> In the original There Edge source, the request handler in <code>FlashProxy.cpp</code> hands each file straight to <code>FlashRequestProxy::Init</code>, which does this:</p>
+
+  <pre><code>bindHost->CreateMoniker(uri, this, &amp;moniker, 0);
+moniker->BindToStorage(this, nullptr, IID_IStream, (void**)&amp;m_stream);</code></pre>
+
+  <p>Bind hosts and monikers are URLMon, the old Windows download machinery. The handler is registered with WebView2's <code>add_WebResourceRequested</code>, and WebView2 always runs those handlers on the thread that created the window: the game's own thread. There is no other thread it could use, because the stock source never creates one. The word <code>CreateThread</code> does not appear in it.</p>
+
+  <p><b>Our code hands files to a worker and returns.</b> In ModernUI's build, the same handler first offers each static file to the file lane. That holds the request open, queues it for a worker thread and returns straight away. The worker reads the file with plain <code>CreateFile</code> and <code>ReadFile</code> calls and posts the result back when it is done.</p>
+
+  <p><b>The shipped DLL really contains it.</b> Comparing the functions each DLL uses from Windows:</p>
+
+  <table class="evidence">
+    <tr><th>FlashProxy.dll</th><th>Thread and file functions it uses</th></tr>
+    <tr><td>Stock There Edge</td><td>none</td></tr>
+    <tr><td>ThereModernUI</td><td>CreateThread, CreateFileW, ReadFile, SetEvent, CreateEventW, PostMessageW</td></tr>
+  </table>
+
+  <p>Anyone can repeat this with Microsoft's <code>dumpbin /imports</code> on the two files.</p>
+
+  <h2>What deliberately did not change</h2>
+
+  <p>Game data and commands, chat, presence, inventory, everything the windows say to the client, still travel their original route. That route carries information about which window is asking, and the client checks it, so we leave it alone. The file lane touches files and nothing else.</p>
+
+  <p>It is also built to fail safe. If a requested file is not on disk where expected, the request quietly falls back to the original path and behaves exactly like the stock client. And if you ever want the stock behaviour back entirely, set the environment variable <code>TMUI_FILELANE=0</code> and restart There.</p>
+
+  <h2>What to expect</h2>
+
+  <p>Play is noticeably smoother: teleports, messages and the dock's panels no longer hold the world up while their files load. You will still catch the odd stutter here and there. That's expected. There's client is from a different era of PC software, with a modern WebView2 now sitting on top of it, and plenty of its own work still runs on that one main thread. The file lane takes away the biggest, most regular cause of freezing, not every pause the client can have.</p>
+
+  <div class="note"><b>To be fair to Microsoft and to There:</b> the underlying Windows bug is real and still exists, and it is not There's code that broke. What ModernUI changes is where the slow work happens, so it can no longer hold up the game. If Microsoft ships a fix, nothing here gets in its way.</div>
+
+  <h2>Try it</h2>
+
+  <p>Install ThereModernUI, then do the things that used to hurt: teleport a few times in a row, let messages come in, open FunFinder. You should notice far fewer freezes.</p>
+
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/Kronzy0nButtons/ThereModernUI/releases/latest">Download ThereModernUI</a>
+    <a class="btn" href="index.html#features">All features</a>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap">
+    <img src="assets/tmui-logo.png" alt="TMUI">
+    <span>A fan-made addon. Not affiliated with There.com.</span>
+    <a href="https://github.com/Kronzy0nButtons/ThereModernUI">github.com/Kronzy0nButtons/ThereModernUI</a>
+  </div>
+</footer>
+
+</body>
+</html>

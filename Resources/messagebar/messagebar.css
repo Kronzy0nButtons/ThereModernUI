@@ -50,7 +50,9 @@ body {
   border: 1px solid var(--border-strong);
   border-bottom: none;
   border-radius: 12px 12px 0px 0px;
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4);
+  /* the card sits 4px inside its window: a wider shadow gets cut off hard
+     at the window edge, this one fades out before it */
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.35);
   opacity: 1;
   transform: translateY(0px);
   transition: opacity 240ms ease, transform 240ms ease;

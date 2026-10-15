@@ -454,6 +454,17 @@ body {
   color:var(--accent);
 }
 
+/* Nearby: who is around you right now, set apart from your own list */
+.items .item[data-type="drawer"][data-nearby="1"] {
+  margin-top:10px;
+  padding-top:8px;
+  border-top:1px solid var(--border);
+}
+
+.items .item[data-type="drawer"][data-nearby="1"] .chevron {
+  color:var(--accent);
+}
+
 .items .item[data-type="drawer"] .name {
   font-size:11px;
   font-weight:600;

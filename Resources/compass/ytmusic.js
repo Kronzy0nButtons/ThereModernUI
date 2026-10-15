@@ -2,14 +2,21 @@
 // YouTube music player for the dock's Music panel (search via Piped, no API key)
 // Author: DANKIES
 //
-// Playback is the YouTube IFrame API in a tiny player. Playlists, queue and
-// settings live in localStorage per avatar. Some videos have embedding
-// turned off by the uploader, those just get skipped.
+// Playback is audio-first: Piped resolves an audio-only stream and a plain
+// <audio> element plays it, far lighter than the whole YouTube iframe player
+// (whose spin-up can hitch the game for a moment). The iframe only loads as a
+// fallback when a stream can't be resolved. Playlists, queue and settings live
+// in localStorage per avatar. Some videos have embedding turned off by the
+// uploader, those just get skipped.
 
 const YtMusic = {
   apiReady: false,
   player: null,
   playerReady: false,
+  engine: 'audio',             // which engine owns playback right now
+  audio: null,                 // the <audio> element (audio engine)
+  audioFor: null,              // track id the audio element is playing
+  nowFor: null,                // track id we were last asked to play
   onPlayerStateChange: null,   // set by dock.js to refresh the UI
   onTrackChange: null,         // set by dock.js
   pendingCue: null,            // track asked for before the player was ready
@@ -79,7 +86,49 @@ const YtMusic = {
   init: function(pilotDoid) {
     YtMusic.data.pilotDoid = pilotDoid || 0;
     YtMusic.load();
-    YtMusic.loadIFrameApi();
+    // the iframe API is NOT loaded here anymore: the audio engine carries
+    // playback, the iframe only spins up on first fallback
+    YtMusic.createAudio();
+    // the first play of a session otherwise pays for both of these: the
+    // browser opening its audio output, and a possibly dead Piped instance
+    // timing out in silence. pay them now, while nothing is happening
+    setTimeout(function() {
+      YtMusic.warmAudio();
+      YtMusic.checkInstance();
+    }, 3500);
+  },
+
+  // an idle running AudioContext keeps the audio output open, so the first
+  // real track doesn't stall on device initialization
+  warmCtx: null,
+  warmAudio: function() {
+    if (YtMusic.warmCtx) {
+      return;
+    }
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        YtMusic.warmCtx = new Ctx();
+        if (YtMusic.warmCtx.resume) {
+          YtMusic.warmCtx.resume().catch(function() {});
+        }
+      }
+    } catch (error) {
+    }
+  },
+
+  // make sure the chosen Piped instance is alive before anyone presses play
+  checkInstance: function() {
+    const base = YtMusic.data.instance;
+    if (!base) {
+      YtMusic.autoPickInstance(function() {});
+      return;
+    }
+    YtMusic.probeInstance(base, function(ok) {
+      if (!ok) {
+        YtMusic.autoPickInstance(function() {});
+      }
+    });
   },
 
   /* ------- persistence (per avatar) ------- */
@@ -93,6 +142,17 @@ const YtMusic = {
       const raw = JSON.parse(localStorage.getItem(YtMusic.key()) || '{}');
       if (Array.isArray(raw.playlists)) {
         YtMusic.data.playlists = raw.playlists;
+        // migrate art saved before: instance-proxied thumbnail urls rot when
+        // that instance dies, YouTube's own CDN never does. the host must be
+        // ytimg itself: proxied urls carry "?host=i.ytimg.com" and must not
+        // slip through
+        for (const pl of YtMusic.data.playlists) {
+          for (const t of (pl.tracks || [])) {
+            if (t && t.id && !/^https?:\/\/i\.ytimg\.com\//.test(t.thumb || '')) {
+              t.thumb = `https://i.ytimg.com/vi/${t.id}/mqdefault.jpg`;
+            }
+          }
+        }
       }
       if (typeof raw.instance == 'string') {
         YtMusic.data.instance = raw.instance;
@@ -163,7 +223,9 @@ const YtMusic = {
             title: it.title || '(untitled)',
             author: it.uploaderName || it.author || '',
             duration: it.duration || 0,
-            thumb: it.thumbnail || `https://i.ytimg.com/vi/${vid}/default.jpg`,
+            // never the instance's proxied thumbnail: those urls rot when the
+            // instance dies. YouTube's own image CDN works for any id, always
+            thumb: `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
           });
         }
         callback(tracks);
@@ -188,7 +250,7 @@ const YtMusic = {
     if (!id) {
       return null;
     }
-    return { id: id, title: input.trim(), author: '', duration: 0, thumb: `https://i.ytimg.com/vi/${id}/default.jpg` };
+    return { id: id, title: input.trim(), author: '', duration: 0, thumb: `https://i.ytimg.com/vi/${id}/mqdefault.jpg` };
   },
 
   /* ------- IFrame player ------- */
@@ -281,9 +343,112 @@ const YtMusic = {
     }
   },
 
+  /* ------- the audio engine ------- */
+
+  createAudio: function() {
+    if (YtMusic.audio) {
+      return;
+    }
+    const a = document.createElement('audio');
+    a.preload = 'auto';
+    // state codes mirror YT.PlayerState so the dock's UI code needs no change
+    a.addEventListener('playing', function() { YtMusic.emitState(1); });
+    a.addEventListener('pause', function() {
+      if (!a.ended) { YtMusic.emitState(2); }
+    });
+    a.addEventListener('waiting', function() { YtMusic.emitState(3); });
+    a.addEventListener('ended', function() {
+      YtMusic.emitState(0);
+      YtMusic.next(true);
+    });
+    a.addEventListener('error', function() {
+      // stream url expired or the instance died mid-track: iframe takes over
+      const t = YtMusic.current();
+      if (YtMusic.engine == 'audio' && t && YtMusic.audioFor == t.id) {
+        YtMusic.playViaYt(t);
+      }
+    });
+    YtMusic.audio = a;
+  },
+
+  emitState: function(code) {
+    if (YtMusic.onPlayerStateChange) {
+      YtMusic.onPlayerStateChange(code);
+    }
+  },
+
+  // ask Piped for the best audio-only stream, callback(url or null, info)
+  fetchAudioUrl: function(videoId, callback) {
+    const base = YtMusic.data.instance;
+    if (!base) {
+      callback(null);
+      return;
+    }
+    $.ajax({
+      url: `${base}/streams/${encodeURIComponent(videoId)}`,
+      dataType: 'json',
+      timeout: 4000,
+      success: function(data) {
+        let best = null;
+        for (const s of (data && data.audioStreams) || []) {
+          if (s && s.url && /^audio\//.test(String(s.mimeType || ''))) {
+            if (!best || (s.bitrate || 0) > (best.bitrate || 0)) {
+              best = s;
+            }
+          }
+        }
+        callback(best ? best.url : null, data);
+      },
+      error: function() {
+        callback(null);
+      },
+    });
+  },
+
   playTrack: function(track) {
+    YtMusic.nowFor = track.id;
+    YtMusic.fetchAudioUrl(track.id, function(url, info) {
+      if (YtMusic.nowFor != track.id) {
+        return; // the user moved on while we were resolving
+      }
+      if (!url || !YtMusic.audio) {
+        YtMusic.playViaYt(track);
+        return;
+      }
+      // pasted links come in with no duration, the stream info has it
+      if (!track.duration && info && info.duration) {
+        track.duration = info.duration;
+      }
+      YtMusic.engine = 'audio';
+      YtMusic.audioFor = track.id;
+      YtMusic.stopYt();
+      const a = YtMusic.audio;
+      try {
+        a.src = url;
+        a.volume = Math.max(0, Math.min(1, (YtMusic.data.volume || 0) / 100));
+        a.play().catch(function() {
+          if (YtMusic.nowFor == track.id) {
+            YtMusic.playViaYt(track);
+          }
+        });
+      } catch (error) {
+        YtMusic.playViaYt(track);
+      }
+    });
+  },
+
+  // the old path: the full YouTube iframe player, loaded on first need
+  playViaYt: function(track) {
+    YtMusic.engine = 'yt';
+    YtMusic.audioFor = null;
+    try {
+      YtMusic.audio.pause();
+      YtMusic.audio.removeAttribute('src');
+    } catch (error) {
+    }
     if (!YtMusic.playerReady || !YtMusic.player) {
       YtMusic.pendingCue = track;
+      YtMusic.loadIFrameApi();
       return;
     }
     try {
@@ -293,7 +458,25 @@ const YtMusic = {
     }
   },
 
+  stopYt: function() {
+    try {
+      if (YtMusic.playerReady && YtMusic.player) {
+        YtMusic.player.stopVideo();
+      }
+    } catch (error) {
+    }
+  },
+
   togglePlay: function() {
+    if (YtMusic.engine == 'audio' && YtMusic.audio && YtMusic.audio.src) {
+      const a = YtMusic.audio;
+      if (a.paused) {
+        a.play().catch(function() {});
+      } else {
+        a.pause();
+      }
+      return;
+    }
     if (!YtMusic.playerReady) {
       return;
     }
@@ -309,6 +492,10 @@ const YtMusic = {
   },
 
   isPlaying: function() {
+    if (YtMusic.engine == 'audio') {
+      const a = YtMusic.audio;
+      return !!(a && a.src && !a.paused && !a.ended);
+    }
     try {
       return YtMusic.playerReady && YtMusic.player.getPlayerState() === YT.PlayerState.PLAYING;
     } catch (error) {
@@ -344,7 +531,11 @@ const YtMusic = {
     }
     // >3s in restarts the track, otherwise previous
     let pos = 0;
-    try { pos = YtMusic.player.getCurrentTime(); } catch (e) {}
+    if (YtMusic.engine == 'audio' && YtMusic.audio) {
+      pos = YtMusic.audio.currentTime || 0;
+    } else {
+      try { pos = YtMusic.player.getCurrentTime(); } catch (e) {}
+    }
     if (pos > 3) {
       YtMusic.playCurrent();
       return;
@@ -360,6 +551,7 @@ const YtMusic = {
   setVolume: function(v) {
     v = Math.max(0, Math.min(100, Number(v) || 0));
     YtMusic.data.volume = v;
+    try { if (YtMusic.audio) { YtMusic.audio.volume = v / 100; } } catch (e) {}
     try { if (YtMusic.playerReady) { YtMusic.player.setVolume(v); } } catch (e) {}
     YtMusic.save();
   },

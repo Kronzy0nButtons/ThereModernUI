@@ -1,0 +1,151 @@
+/* ThereModernUI - volumecontrol/tmui-skin.css
+   The ModernUI look laid over the stock volume HUD. Loaded after volume.css,
+   so it only overrides; the stock logic and layout stay untouched.
+   Author: DANKIES */
+
+:root {
+  --tint: 17, 21, 28;
+  --tint-raised: 28, 35, 45;
+  --accent: #38bdf8;
+  --accent-bright: #bae6fd;
+  --accent-rgb: 56, 189, 248;
+  --text: #e8edf2;
+  --text-dim: #93a1ae;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.20);
+}
+
+body {
+  font-family:'Segoe UI', system-ui, sans-serif;
+  color:var(--text);
+}
+
+.volume {
+  background-color:rgba(var(--tint), 0.92);
+  border:1px solid var(--border-strong);
+  border-radius:12px;
+  box-shadow:0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.volume .titlebar {
+  background-image:none;
+  background-color:rgba(255, 255, 255, 0.06);
+  border:none;
+  border-bottom:1px solid var(--border);
+  border-radius:0px;
+}
+
+.volume[data-state="bar"] .titlebar {
+  background-image:none;
+  border-bottom:none;
+}
+
+.volume .titlebar span {
+  color:var(--text);
+  font-weight:600;
+  font-family:inherit;
+}
+
+/* window buttons: flat with drawn glyphs instead of the sprite sheet */
+.volume .titlebar .buttons .button {
+  position:relative;
+  background-image:none !important;
+  background-color:rgba(255, 255, 255, 0.08);
+  border:1px solid var(--border);
+  border-radius:4px;
+}
+
+.volume .titlebar .buttons .button::after {
+  position:absolute;
+  inset:0px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:8px;
+  line-height:1;
+  color:var(--text-dim);
+}
+
+.volume .titlebar .buttons .button[data-id="close"]::after {
+  content:'\2715';
+}
+
+.volume .titlebar .buttons .button[data-id="bar"]::after {
+  content:'\2013';
+  font-weight:700;
+}
+
+.volume .titlebar .buttons .button[data-id="full"]::after {
+  content:'\25A1';
+  font-size:9px;
+}
+
+.volume .titlebar .buttons .button:hover {
+  border-color:var(--accent);
+}
+
+.volume .titlebar .buttons .button:hover::after {
+  color:var(--accent-bright);
+}
+
+.volume .panel .title {
+  color:var(--text-dim);
+  font-family:inherit;
+}
+
+.volume .panel .slider {
+  background-image:none;
+  background-color:rgba(255, 255, 255, 0.14);
+  border-radius:3px;
+}
+
+.volume .panel .slider .knob {
+  background-image:none !important;
+  background-color:var(--accent);
+  border:1px solid rgba(0, 0, 0, 0.45);
+  box-shadow:0 0 5px rgba(var(--accent-rgb), 0.6);
+}
+
+.volume .panel .slider .knob:hover {
+  background-color:var(--accent-bright);
+}
+
+.volume .footer .button {
+  background-image:none !important;
+  background-color:rgba(255, 255, 255, 0.08);
+  border:1px solid var(--border);
+  border-radius:8px;
+  color:var(--text);
+  font-family:inherit;
+  font-weight:600;
+}
+
+.volume .footer .button:hover {
+  border-color:var(--accent);
+  text-shadow:none;
+}
+
+.volume .footer .button:hover:active {
+  text-shadow:none;
+}
+
+.volume .footer .button.medium[data-engaged="1"] {
+  background-color:var(--accent);
+  border-color:var(--accent);
+  color:#0b1620;
+}
+
+.volume .footer .button[data-enabled="0"],
+.volume .footer .button[data-enabled="0"]:hover,
+.volume .footer .button[data-enabled="0"]:active {
+  color:var(--text-dim);
+  text-shadow:none;
+  opacity:0.5;
+}
+
+.volume .footer .bar {
+  background-image:none;
+  background-color:rgba(255, 255, 255, 0.04);
+  border:none;
+  border-top:1px solid var(--border);
+}

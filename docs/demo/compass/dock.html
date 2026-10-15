@@ -13,9 +13,384 @@
 <script src="iconcache.js"></script>
 <script src="icons.js"></script>
 <script src="ytmusic.js"></script>
+<script src="chatcommands.js"></script>
+<script src="gpsmaps.js"></script>
 <script src="../tmui/update.js"></script>
 <script src="dock.js"></script>
 <script src="demo-after.js"></script>
+<style id="tmui-dna-inline">
+/* DNA tab layout, inline so a cached dock.css can never serve the old layout */
+/* DNA tab: no folders, card sizes or quick equip apply, hide the footer chrome */
+.dockroot[data-panel="wardrobe"][data-dna="1"] .panelfooter,
+.dockroot[data-panel="wardrobe"][data-dna="1"] .foldertabs {
+  display:none;
+}
+/* Wardrobe DNA tab: body and face shape sliders. two balanced columns next
+   to the preview figure, everything fits without scrolling */
+.dnahost {
+  grid-column:1 / -1;
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding:2px 4px;
+}
+
+.dnagate {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:8px;
+  font-size:11px;
+  color:var(--text-dim);
+  background-color:rgba(255, 255, 255, 0.05);
+  border:1px solid var(--border);
+}
+
+.dnagate[data-on="1"] {
+  color:var(--accent-bright);
+  background-color:rgba(var(--accent-rgb), 0.12);
+  border-color:rgba(var(--accent-rgb), 0.4);
+}
+
+
+.dnarow {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  box-sizing:border-box;
+  padding:1px 0px;
+}
+
+.dnarow .dnalabel {
+  flex:0 0 78px;
+  font-size:10.5px;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.dnarow .dnaslider {
+  position:relative;
+  flex:1 1 auto;
+  min-width:80px;
+  height:13px;
+  cursor:pointer;
+}
+
+.dnarow .dnaslider::before {
+  content:'';
+  position:absolute;
+  left:5.5px;
+  right:5.5px;
+  top:5px;
+  height:3px;
+  border-radius:2px;
+  background-color:rgba(255, 255, 255, 0.14);
+}
+
+.dnarow .dnaslider::after {
+  content:'';
+  position:absolute;
+  left:5.5px;
+  top:5px;
+  width:calc((100% - 11px) * var(--fill, 0) / 100%);
+  height:3px;
+  border-radius:2px;
+  background-color:var(--accent);
+  opacity:0.7;
+}
+
+.dnarow .dnaknob {
+  position:absolute;
+  top:1px;
+  left:0px;
+  width:11px;
+  height:11px;
+  border-radius:50%;
+  background-color:var(--accent);
+  border:1px solid rgba(0, 0, 0, 0.45);
+  box-shadow:0 0 5px rgba(var(--accent-rgb), 0.6);
+  cursor:grab;
+}
+
+.dnahost[data-locked="1"] .dnaknob {
+  background-color:var(--text-dim);
+  box-shadow:none;
+  cursor:default;
+}
+
+.dnahost[data-locked="1"] .dnaslider {
+  cursor:default;
+  opacity:0.65;
+}
+
+/* DNA live preview silhouette beside the slider columns */
+.dnabody {
+  width:100%;
+  display:flex;
+  gap:14px;
+  align-items:flex-start;
+}
+
+.dnafigwrap {
+  flex:0 0 138px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:3px;
+  padding:8px 4px 6px;
+  background:linear-gradient(180deg, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.18));
+  border:1px solid var(--border-strong);
+  border-radius:12px;
+}
+
+.dnafig {
+  width:126px;
+  height:262px;
+}
+
+.dnafigcap {
+  font-size:8.5px;
+  font-weight:700;
+  letter-spacing:1px;
+  text-transform:uppercase;
+  color:var(--text-dim);
+}
+
+.dnafig .df-head,
+.dnafig .df-body {
+  fill:rgba(var(--accent-rgb), 0.10);
+  stroke:var(--accent);
+  stroke-width:1.6;
+  stroke-linejoin:round;
+  filter:drop-shadow(0 0 4px rgba(var(--accent-rgb), 0.45));
+}
+
+.dnafig .df-limb {
+  fill:none;
+  stroke:rgba(var(--accent-rgb), 0.55);
+  stroke-linecap:round;
+}
+
+.dnafig .df-eye {
+  fill:var(--accent-bright);
+}
+
+.dnafig .df-line {
+  fill:none;
+  stroke:rgba(var(--accent-rgb), 0.8);
+  stroke-width:1;
+  stroke-linecap:round;
+}
+
+.dnafig .df-lip {
+  fill:none;
+  stroke:var(--accent-bright);
+  stroke-linecap:round;
+}
+
+.dnacamcap {
+  margin-top:6px;
+  font-size:8.5px;
+  font-weight:700;
+  letter-spacing:1px;
+  text-transform:uppercase;
+  color:var(--text-dim);
+}
+
+.dnacam {
+  display:grid;
+  grid-template-columns:repeat(3, 26px);
+  grid-template-rows:repeat(2, 24px);
+  gap:3px;
+  justify-content:center;
+}
+
+.dnacambtn {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background-color:rgba(255, 255, 255, 0.07);
+  border:1px solid var(--border);
+  border-radius:6px;
+  color:var(--text);
+  cursor:pointer;
+}
+
+.dnacambtn:hover {
+  border-color:var(--accent);
+  color:var(--accent-bright);
+}
+
+.dnacambtn svg {
+  width:11px;
+  height:11px;
+}
+
+.dnacambtn[data-k="up"] { grid-column:2; grid-row:1; }
+.dnacambtn[data-k="up"] svg { transform:rotate(-90deg); }
+.dnacambtn[data-k="left"] { grid-column:1; grid-row:2; }
+.dnacambtn[data-k="left"] svg { transform:rotate(180deg); }
+.dnacambtn[data-k="down"] { grid-column:2; grid-row:2; }
+.dnacambtn[data-k="down"] svg { transform:rotate(90deg); }
+.dnacambtn[data-k="right"] { grid-column:3; grid-row:2; }
+
+
+.dnacols {
+  flex:1 1 0;
+  min-width:0;
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.dnaacc {
+  border:1px solid var(--border);
+  border-radius:8px;
+  overflow:hidden;
+  transition:border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.dnaacc[data-open="1"] {
+  border-color:var(--accent);
+  box-shadow:0 0 8px rgba(var(--accent-rgb), 0.45);
+}
+
+.dnaacc[data-open="1"] .dnaacchead {
+  color:var(--accent-bright);
+}
+
+.dnaacchead {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:6px 10px;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:0.6px;
+  text-transform:uppercase;
+  color:var(--text-dim);
+  background-color:rgba(255, 255, 255, 0.05);
+  cursor:pointer;
+}
+
+.dnaacchead:hover {
+  color:var(--text);
+}
+
+.dnaacchead .dnaacchevron {
+  display:flex;
+  align-items:center;
+  color:var(--text-dim);
+  transform:rotate(90deg);
+  transition:transform 140ms ease;
+}
+
+.dnaacchead .dnaacchevron svg {
+  width:9px;
+  height:9px;
+}
+
+.dnaacc[data-open="1"] .dnaacchevron {
+  transform:rotate(90deg);
+}
+
+.dnaacc[data-open="0"] .dnaacchevron {
+  transform:rotate(0deg);
+}
+
+.dnaaccbody {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:2px 18px;
+  padding:7px 10px 9px;
+}
+
+
+.dnaskinbody {
+  display:block;
+}
+
+.dnaskins {
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+}
+
+.dnaskin {
+  width:30px;
+  height:30px;
+  border-radius:50%;
+  border:2px solid transparent;
+  box-shadow:inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+  cursor:pointer;
+}
+
+.dnaskin:hover {
+  border-color:var(--border-strong);
+}
+
+.dnaskin[data-selected="1"] {
+  border-color:var(--accent);
+  box-shadow:inset 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 6px rgba(var(--accent-rgb), 0.7);
+}
+
+.dnahost[data-locked="1"] .dnaskin {
+  cursor:default;
+  opacity:0.6;
+}
+
+.dnaacc[data-open="0"] .dnaaccbody {
+  display:none;
+}
+
+
+.dnagate .dnagatebtns {
+  display:inline-flex;
+  gap:8px;
+  margin-left:10px;
+}
+
+.dnagate .dnabtn {
+  padding:2px 11px;
+  border-radius:999px;
+  font-weight:700;
+  color:var(--accent-bright);
+  background-color:rgba(var(--accent-rgb), 0.18);
+  border:1px solid rgba(var(--accent-rgb), 0.45);
+  cursor:pointer;
+  white-space:nowrap;
+}
+
+.dnagate .dnabtn:hover {
+  background-color:rgba(var(--accent-rgb), 0.3);
+  color:#ffffff;
+}
+
+@keyframes dnaalert {
+  0%, 100% {
+    border-color:rgba(var(--accent-rgb), 0.4);
+    box-shadow:0 0 0 rgba(var(--accent-rgb), 0);
+  }
+  50% {
+    border-color:var(--accent-bright);
+    box-shadow:0 0 12px rgba(var(--accent-rgb), 0.8);
+  }
+}
+
+.dnagate[data-alert="1"] {
+  animation:dnaalert 0.9s ease-in-out infinite;
+}
+
+</style>
 <style>.dockroot { left:50% !important; transform:translateX(-50%); }</style>
 </head>
 <body>
@@ -51,6 +426,13 @@
 <div class="spdrow"><span class="spdgear">N</span><span class="spdval">0</span></div>
 <span class="spdunit">mph</span>
 </div>
+</div>
+<div class="spdgpsbtn" title="GPS" data-icon="map-location-dot"></div>
+<div class="spdgps">
+<div class="gpsview"><div class="gpsplane"><div class="gpssea"></div><div class="gpsmap"><img class="gpsimg" alt=""></div></div></div>
+<div class="gpsfog"></div>
+<div class="gpscar"></div>
+<div class="gpsname"></div>
 </div>
 </div>
 <div class="dock">
@@ -158,6 +540,9 @@
 <div class="item mini" data-id="music" title="Music">
 <div class="glyph" data-icon="music"></div>
 </div>
+<div class="item mini" data-id="volume" title="Volume">
+<div class="glyph" data-icon="volume-high"></div>
+</div>
 <div class="item mini" data-id="quickbar" title="Quick Bar">
 <div class="glyph" data-icon="bolt"></div>
 </div>
@@ -188,6 +573,15 @@
 <div class="tabs"></div>
 <div class="foldertabs"></div>
 <div class="grid"></div>
+<div class="maphost">
+<div class="mapframe">
+<div class="mapstage"><img class="mapimg" alt=""><img class="mapworld" src="maps/world.png" alt=""><div class="maplabels"></div><div class="mapdot"><div class="maparrow"></div></div></div>
+<div class="mapviews"><div class="mapview" data-view="auto">Here</div><div class="mapview" data-view="main">World</div><div class="mapview" data-view="global">Planet</div></div>
+<div class="mapzoombtns"><div class="mapzoom" data-dir="1">+</div><div class="mapzoom" data-dir="-1">&#8722;</div></div>
+</div>
+<div class="mapinfo"><span class="mapname"></span><span class="mapcoords"></span></div>
+<div class="mapcredit">Map data from Myrmex GPS. Island maps by There.</div>
+</div>
 <div class="folderprompt" data-active="0"></div>
 <div class="panelfooter">
 <span class="footcount"></span>
@@ -212,6 +606,18 @@
 <span class="scaleglyph big">&#9632;</span>
 </div>
 </div>
+</div>
+</div>
+<div class="volumepanel">
+<div class="panelbar">
+<span class="paneltitle">Volume</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="volbody">
+<div class="volrow" data-id="voice" data-pref="VoiceVolume"><span class="volicon" data-icon="user-group"></span><span class="vollabel">Voice</span><input type="range" class="npvolslider volslider" min="0" max="100" step="1" value="0"><span class="volvalue"></span></div>
+<div class="volrow" data-id="music" data-pref="MusicVolume"><span class="volicon" data-icon="music"></span><span class="vollabel">Music</span><input type="range" class="npvolslider volslider" min="0" max="100" step="1" value="0"><span class="volvalue"></span></div>
+<div class="volrow" data-id="environment" data-pref="EnvironmentVolume"><span class="volicon" data-icon="map-location-dot"></span><span class="vollabel">Environment</span><input type="range" class="npvolslider volslider" min="0" max="100" step="1" value="0"><span class="volvalue"></span></div>
+<div class="volfoot"><span class="volnote"></span><div class="volmute" data-on="0"><span class="volmuteicon" data-icon="volume-high"></span><span class="volmutetext">Mute all</span></div></div>
 </div>
 </div>
 <div class="settingspanel">
@@ -296,20 +702,21 @@
 <div class="aboutsection">
 <div class="aboutlabel">About</div>
 <div class="aboutvalue">
-This is a replacement addon for the game&#8217;s original Communicator, Compass &amp;
-Message Bar.
+A replacement for the game&#8217;s original Compass, Communicator and Message Bar.
+It also brings ChangeMe&#8217;s body and face editing into the Wardrobe, puts the volume
+sliders in the dock, gives the trade window a matching look, and ships rebuilt
+There Edge components that make the client noticeably smoother while its windows load.
 </div>
+</div>
+<div class="aboutsection">
+<div class="aboutlabel">Testers</div>
+<div class="aboutvalue">erick758, Edith, bubblegumgirl. Thank you for breaking things so nobody else has to.</div>
 </div>
 <div class="aboutsection">
 <div class="aboutlabel">Credits</div>
 <div class="aboutvalue">
 <b>hmphus</b>: BrowserProxy &amp; FlashProxy, part of
-<a class="aboutlink" data-href="https://github.com/hmphus/there-edge">There Edge</a> (<a class="aboutlink" data-href="https://github.com/hmphus/there-edge/blob/main/LICENSE.md">MIT License</a>).
-</div>
-</div>
-<div class="aboutsection">
-<div class="aboutlabel">Icons &amp; sounds</div>
-<div class="aboutvalue">Font Awesome Free by Fonticons, Inc. (<a class="aboutlink" data-href="https://fontawesome.com/license/free">CC BY 4.0</a>), shipped locally. Notification sound by <b>Universfield</b>. GIFs powered by <b>KLIPY</b>.</div>
+<a class="aboutlink" data-href="https://github.com/hmphus/there-edge">There Edge</a> (<a class="aboutlink" data-href="https://github.com/hmphus/there-edge/blob/main/LICENSE.md">MIT License</a>).<br>Font Awesome Free by Fonticons, Inc. (<a class="aboutlink" data-href="https://fontawesome.com/license/free">CC BY 4.0</a>), shipped locally.<br>Notification sound by <b>Universfield</b>.<br>GIFs powered by <b>KLIPY</b>.<br>Music search and audio streams via <b>Piped</b>, an open source YouTube proxy (<a class="aboutlink" data-href="https://github.com/TeamPiped/Piped">GitHub</a>).<br>Map regions and calibration from <b>Myrmex GPS</b>; island map art by There.<br>Slash commands from <b>TheChaz</b>&#8217;s Command Bar list.</div>
 </div>
 </div>
 </div>

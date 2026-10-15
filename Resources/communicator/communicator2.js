@@ -101,6 +101,10 @@ There.init({
       return results;
     }
     for (let entry of folder.entries) {
+      // Nearby changes as people come and go, it's never imported as a folder
+      if (entry.type == 'drawer' && There.isNearby(entry)) {
+        continue;
+      }
       if (entry.type == 'drawer') {
         const members = entry.entries.filter(e => e.type == 'avatar').map(e => e.id);
         if (members.length > 0) {
@@ -637,6 +641,10 @@ There.init({
       for (let entry of There.data.folder.entries) {
         There.renderEntry(divItems, entry, 0, moved);
       }
+      const nearby = There.findNearby(There.data.folder);
+      if (nearby) {
+        There.renderNearby(divItems, nearby);
+      }
       if (There.data.folder.entries.length == 0 && (There.data.customFolders ?? []).length == 0) {
         $('<div class="empty"></div>').text('Your list is empty. Add a buddy to get started.').appendTo($(divItems));
       } else if ($(divItems).children().length == 0) {
@@ -666,10 +674,73 @@ There.init({
         There.renderAvatar(divItems, entry, indent);
       }
     } else if (entry.type == 'drawer') {
-      // server side folders are ignored, their people join the flat list.
-      // organize with your own folders instead
+      // Nearby is the one server folder we keep: it's who is around you right
+      // now, not a way to organize buddies. it gets its own section at the end
+      if (There.isNearby(entry)) {
+        return;
+      }
+      // other server side folders are ignored, their people join the flat
+      // list. organize with your own folders instead
       for (let child of entry.entries) {
         There.renderEntry(divItems, child, 0, moved);
+      }
+    }
+  },
+
+  isNearby: function(entry) {
+    return entry.type == 'drawer' && String(entry.name || entry.id || '').trim().toLowerCase() == 'nearby';
+  },
+
+  findNearby: function(folder) {
+    for (let entry of (folder?.entries ?? [])) {
+      if (There.isNearby(entry)) {
+        return entry;
+      }
+      if (entry.type == 'drawer') {
+        const inner = There.findNearby(entry);
+        if (inner) {
+          return inner;
+        }
+      }
+    }
+    return null;
+  },
+
+  // everyone near you, buddies included (it answers "who's here", so a buddy
+  // shows both in your list and here)
+  renderNearby: function(divItems, entry) {
+    const people = There.collectAvatars(entry, []).filter(There.isVisible);
+    const seen = new Set();
+    const unique = people.filter(function(p) {
+      if (seen.has(p.id)) {
+        return false;
+      }
+      seen.add(p.id);
+      return true;
+    });
+    if (unique.length == 0) {
+      return;
+    }
+    let divItem = $('<div class="item"></div>');
+    $(divItem).attr('data-type', 'drawer');
+    $(divItem).attr('data-nearby', '1');
+    $(divItem).attr('data-id', entry.id);
+    $(divItem).attr('data-drawer', entry.open ? 'open' : 'closed');
+    $(divItem).css('--indent', 0);
+    $('<div class="chevron"></div>').text('▸').appendTo($(divItem));
+    $('<div class="name"></div>').text(entry.name || 'Nearby').appendTo($(divItem));
+    $('<div class="count"></div>').text(String(unique.length)).appendTo($(divItem));
+    $(divItem).on('click', function() {
+      There.clearContextMenu();
+      There.playSound('control down');
+      entry.open = !entry.open;
+      There.renderList();
+    });
+    $(divItem).appendTo($(divItems));
+    if (entry.open) {
+      unique.sort((a, b) => There.statusRank[a.status] - There.statusRank[b.status] || a.name.localeCompare(b.name));
+      for (let person of unique) {
+        There.renderAvatar(divItems, person, 1);
       }
     }
   },
@@ -784,7 +855,10 @@ There.init({
     if (There.data.folder == undefined) {
       return;
     }
-    const counts = There.countAvatars(There.data.folder);
+    // your people only: whoever happens to be nearby isn't "online" in your list
+    const counts = There.countAvatars({
+      entries: There.data.folder.entries.filter(e => !There.isNearby(e)),
+    });
     $('.titlebar .title .count').text(counts.total > 0 ? `${counts.online} online` : '');
   },
 

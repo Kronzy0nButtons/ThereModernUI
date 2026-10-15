@@ -54,6 +54,7 @@ body {
 .panel,
 .settingspanel,
 .aboutpanel,
+.volumepanel,
 .musicpanel,
 .emotespanel,
 .scenespanel,
@@ -449,6 +450,7 @@ body {
 .dockroot[data-cockpit="down"] .panel,
 .dockroot[data-cockpit="down"] .settingspanel,
 .dockroot[data-cockpit="down"] .aboutpanel,
+.dockroot[data-cockpit="down"] .volumepanel,
 .dockroot[data-cockpit="down"] .musicpanel,
 .dockroot[data-cockpit="down"] .emotespanel,
 .dockroot[data-cockpit="down"] .scenespanel,
@@ -458,6 +460,7 @@ body {
 .dockroot[data-gate="avatar"] .panel,
 .dockroot[data-gate="avatar"] .settingspanel,
 .dockroot[data-gate="avatar"] .aboutpanel,
+.dockroot[data-gate="avatar"] .volumepanel,
 .dockroot[data-gate="avatar"] .musicpanel,
 .dockroot[data-gate="avatar"] .emotespanel,
 .dockroot[data-gate="avatar"] .scenespanel,
@@ -468,6 +471,7 @@ body {
 .dockroot[data-gate="switching"] .panel,
 .dockroot[data-gate="switching"] .settingspanel,
 .dockroot[data-gate="switching"] .aboutpanel,
+.dockroot[data-gate="switching"] .volumepanel,
 .dockroot[data-gate="switching"] .musicpanel,
 .dockroot[data-gate="switching"] .emotespanel,
 .dockroot[data-gate="switching"] .scenespanel,
@@ -964,6 +968,7 @@ body {
 .panel,
 .settingspanel,
 .aboutpanel,
+.volumepanel,
 .musicpanel,
 .emotespanel,
 .scenespanel,
@@ -979,7 +984,9 @@ body {
   height:0px;
   margin-bottom:0px;
   background-color:var(--bg);
-  border:1px solid transparent;
+  /* no border while closed: a 0-height panel still keeps its border, and
+     every closed panel stacked under the open one widened the gap to the dock */
+  border:0px solid transparent;
   border-radius:14px;
   box-shadow:0 2px 6px rgba(0, 0, 0, 0.5);
   overflow:hidden;
@@ -1079,6 +1086,7 @@ body {
 
 /* no search box here, title takes the space and pushes close right */
 .settingspanel .paneltitle,
+.volumepanel .paneltitle,
 .aboutpanel .paneltitle {
   flex:1 1 auto;
 }
@@ -1320,6 +1328,10 @@ body {
   border-radius:10px;
   overflow:hidden;
   transition:background-color 120ms ease;
+  /* offscreen cards are neither laid out nor painted: scrolling a huge
+     wardrobe stays cheap. the intrinsic size keeps the scrollbar honest */
+  content-visibility:auto;
+  contain-intrinsic-size:var(--card) calc(var(--card) + 39px);
 }
 
 .grid .card:hover {
@@ -1354,6 +1366,14 @@ body {
   justify-content:center;
   font-size:calc(var(--card) * 0.36);
   color:var(--text-dim);
+}
+
+.grid .card .thumb .thumbimg {
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  border-radius:inherit;
+  display:block;
 }
 
 .grid .card .cardname {
@@ -1545,6 +1565,7 @@ body {
   padding:5px 8px;
   border-radius:8px;
   border-bottom:1px solid rgba(255, 255, 255, 0.04);
+  contain-intrinsic-size:300px 45px;
 }
 
 .panel[data-view="list"] .grid .card .thumb {
@@ -4447,4 +4468,858 @@ body {
 
 .itemdetail .idlink:hover {
   color:var(--accent-bright);
+}
+
+/* Wardrobe DNA tab: body and face shape sliders. two balanced columns next
+   to the preview figure, everything fits without scrolling */
+.dnahost {
+  grid-column:1 / -1;
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding:2px 4px;
+}
+
+.dnagate {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:8px;
+  font-size:11px;
+  color:var(--text-dim);
+  background-color:rgba(255, 255, 255, 0.05);
+  border:1px solid var(--border);
+}
+
+.dnagate[data-on="1"] {
+  color:var(--accent-bright);
+  background-color:rgba(var(--accent-rgb), 0.12);
+  border-color:rgba(var(--accent-rgb), 0.4);
+}
+
+
+.dnarow {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  box-sizing:border-box;
+  padding:1px 0px;
+}
+
+.dnarow .dnalabel {
+  flex:0 0 78px;
+  font-size:10.5px;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.dnarow .dnaslider {
+  position:relative;
+  flex:1 1 auto;
+  min-width:80px;
+  height:13px;
+  cursor:pointer;
+}
+
+.dnarow .dnaslider::before {
+  content:'';
+  position:absolute;
+  left:5.5px;
+  right:5.5px;
+  top:5px;
+  height:3px;
+  border-radius:2px;
+  background-color:rgba(255, 255, 255, 0.14);
+}
+
+.dnarow .dnaslider::after {
+  content:'';
+  position:absolute;
+  left:5.5px;
+  top:5px;
+  width:calc((100% - 11px) * var(--fill, 0) / 100%);
+  height:3px;
+  border-radius:2px;
+  background-color:var(--accent);
+  opacity:0.7;
+}
+
+.dnarow .dnaknob {
+  position:absolute;
+  top:1px;
+  left:0px;
+  width:11px;
+  height:11px;
+  border-radius:50%;
+  background-color:var(--accent);
+  border:1px solid rgba(0, 0, 0, 0.45);
+  box-shadow:0 0 5px rgba(var(--accent-rgb), 0.6);
+  cursor:grab;
+}
+
+.dnahost[data-locked="1"] .dnaknob {
+  background-color:var(--text-dim);
+  box-shadow:none;
+  cursor:default;
+}
+
+.dnahost[data-locked="1"] .dnaslider {
+  cursor:default;
+  opacity:0.65;
+}
+
+.dnagate .dnagatebtns {
+  display:inline-flex;
+  gap:8px;
+  margin-left:10px;
+}
+
+.dnagate .dnabtn {
+  padding:2px 11px;
+  border-radius:999px;
+  font-weight:700;
+  color:var(--accent-bright);
+  background-color:rgba(var(--accent-rgb), 0.18);
+  border:1px solid rgba(var(--accent-rgb), 0.45);
+  cursor:pointer;
+  white-space:nowrap;
+}
+
+.dnagate .dnabtn:hover {
+  background-color:rgba(var(--accent-rgb), 0.3);
+  color:#ffffff;
+}
+
+@keyframes dnaalert {
+  0%, 100% {
+    border-color:rgba(var(--accent-rgb), 0.4);
+    box-shadow:0 0 0 rgba(var(--accent-rgb), 0);
+  }
+  50% {
+    border-color:var(--accent-bright);
+    box-shadow:0 0 12px rgba(var(--accent-rgb), 0.8);
+  }
+}
+
+.dnagate[data-alert="1"] {
+  animation:dnaalert 0.9s ease-in-out infinite;
+}
+
+
+/* DNA live preview silhouette beside the slider columns */
+.dnabody {
+  width:100%;
+  display:flex;
+  gap:14px;
+  align-items:flex-start;
+}
+
+.dnafigwrap {
+  flex:0 0 138px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:3px;
+  padding:8px 4px 6px;
+  background:linear-gradient(180deg, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.18));
+  border:1px solid var(--border-strong);
+  border-radius:12px;
+}
+
+.dnafig {
+  width:126px;
+  height:262px;
+}
+
+.dnafigcap {
+  font-size:8.5px;
+  font-weight:700;
+  letter-spacing:1px;
+  text-transform:uppercase;
+  color:var(--text-dim);
+}
+
+.dnafig .df-head,
+.dnafig .df-body {
+  fill:rgba(var(--accent-rgb), 0.10);
+  stroke:var(--accent);
+  stroke-width:1.6;
+  stroke-linejoin:round;
+  filter:drop-shadow(0 0 4px rgba(var(--accent-rgb), 0.45));
+}
+
+.dnafig .df-limb {
+  fill:none;
+  stroke:rgba(var(--accent-rgb), 0.55);
+  stroke-linecap:round;
+}
+
+.dnafig .df-eye {
+  fill:var(--accent-bright);
+}
+
+.dnafig .df-line {
+  fill:none;
+  stroke:rgba(var(--accent-rgb), 0.8);
+  stroke-width:1;
+  stroke-linecap:round;
+}
+
+.dnafig .df-lip {
+  fill:none;
+  stroke:var(--accent-bright);
+  stroke-linecap:round;
+}
+
+.dnacamcap {
+  margin-top:6px;
+  font-size:8.5px;
+  font-weight:700;
+  letter-spacing:1px;
+  text-transform:uppercase;
+  color:var(--text-dim);
+}
+
+.dnacam {
+  display:grid;
+  grid-template-columns:repeat(3, 26px);
+  grid-template-rows:repeat(2, 24px);
+  gap:3px;
+  justify-content:center;
+}
+
+.dnacambtn {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background-color:rgba(255, 255, 255, 0.07);
+  border:1px solid var(--border);
+  border-radius:6px;
+  color:var(--text);
+  cursor:pointer;
+}
+
+.dnacambtn:hover {
+  border-color:var(--accent);
+  color:var(--accent-bright);
+}
+
+.dnacambtn svg {
+  width:11px;
+  height:11px;
+}
+
+.dnacambtn[data-k="up"] { grid-column:2; grid-row:1; }
+.dnacambtn[data-k="up"] svg { transform:rotate(-90deg); }
+.dnacambtn[data-k="left"] { grid-column:1; grid-row:2; }
+.dnacambtn[data-k="left"] svg { transform:rotate(180deg); }
+.dnacambtn[data-k="down"] { grid-column:2; grid-row:2; }
+.dnacambtn[data-k="down"] svg { transform:rotate(90deg); }
+.dnacambtn[data-k="right"] { grid-column:3; grid-row:2; }
+
+
+.dnacols {
+  flex:1 1 0;
+  min-width:0;
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.dnaacc {
+  border:1px solid var(--border);
+  border-radius:8px;
+  overflow:hidden;
+  transition:border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.dnaacc[data-open="1"] {
+  border-color:var(--accent);
+  box-shadow:0 0 8px rgba(var(--accent-rgb), 0.45);
+}
+
+.dnaacc[data-open="1"] .dnaacchead {
+  color:var(--accent-bright);
+}
+
+.dnaacchead {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:6px 10px;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:0.6px;
+  text-transform:uppercase;
+  color:var(--text-dim);
+  background-color:rgba(255, 255, 255, 0.05);
+  cursor:pointer;
+}
+
+.dnaacchead:hover {
+  color:var(--text);
+}
+
+.dnaacchead .dnaacchevron {
+  display:flex;
+  align-items:center;
+  color:var(--text-dim);
+  transform:rotate(90deg);
+  transition:transform 140ms ease;
+}
+
+.dnaacchead .dnaacchevron svg {
+  width:9px;
+  height:9px;
+}
+
+.dnaacc[data-open="1"] .dnaacchevron {
+  transform:rotate(90deg);
+}
+
+.dnaacc[data-open="0"] .dnaacchevron {
+  transform:rotate(0deg);
+}
+
+.dnaaccbody {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:2px 18px;
+  padding:7px 10px 9px;
+}
+
+
+.dnaskinbody {
+  display:block;
+}
+
+.dnaskins {
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+}
+
+.dnaskin {
+  width:30px;
+  height:30px;
+  border-radius:50%;
+  border:2px solid transparent;
+  box-shadow:inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+  cursor:pointer;
+}
+
+.dnaskin:hover {
+  border-color:var(--border-strong);
+}
+
+.dnaskin[data-selected="1"] {
+  border-color:var(--accent);
+  box-shadow:inset 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 6px rgba(var(--accent-rgb), 0.7);
+}
+
+.dnahost[data-locked="1"] .dnaskin {
+  cursor:default;
+  opacity:0.6;
+}
+
+.dnaacc[data-open="0"] .dnaaccbody {
+  display:none;
+}
+
+
+/* closed panels keep painted layers stacked behind the open one, and fast
+   scrolling can flash their stale tiles (the auction grid haunting the DNA
+   tab). Fully hide them once the close animation ends */
+.panel,
+.settingspanel,
+.aboutpanel,
+.volumepanel,
+.musicpanel,
+.emotespanel,
+.scenespanel,
+.gifspanel,
+.appspanel,
+.shoppanel,
+.auctionspanel {
+  visibility:hidden;
+  transition:height 200ms ease, opacity 160ms ease, margin-bottom 200ms ease, visibility 0s 220ms;
+}
+
+.dockroot[data-panel="inventory"] .panel,
+.dockroot[data-panel="wardrobe"] .panel,
+.dockroot[data-panel="places"] .panel,
+.dockroot[data-panel="settings"] .settingspanel,
+.dockroot[data-panel="about"] .aboutpanel,
+.dockroot[data-panel="volume"] .volumepanel,
+.dockroot[data-panel="music"] .musicpanel,
+.dockroot[data-panel="emotes"] .emotespanel,
+.dockroot[data-panel="scenes"] .scenespanel,
+.dockroot[data-panel="gifs"] .gifspanel,
+.dockroot[data-panel="apps"] .appspanel,
+.dockroot[data-panel="shop"] .shoppanel,
+.dockroot[data-panel="auctions"] .auctionspanel {
+  visibility:visible;
+  border-width:1px;
+  transition:height 200ms ease, opacity 160ms ease, margin-bottom 200ms ease, visibility 0s 0s;
+}
+
+
+/* DNA tab: no folders, card sizes or quick equip apply, hide the footer chrome */
+.dockroot[data-panel="wardrobe"][data-dna="1"] .panelfooter,
+.dockroot[data-panel="wardrobe"][data-dna="1"] .foldertabs {
+  display:none;
+}
+
+/* Volume: the game's three sliders and mute, run through the headless
+   volume window (only it can change the client's sound preferences) */
+.dockroot[data-panel="volume"] .volumepanel {
+  height:214px;
+  margin-bottom:10px;
+  border-color:var(--border-strong);
+  opacity:1;
+  pointer-events:auto;
+}
+
+.volbody {
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  padding:14px 18px 16px;
+}
+
+.volrow {
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+.volrow .volicon {
+  flex:0 0 18px;
+  width:18px;
+  height:18px;
+  color:var(--accent);
+}
+
+.volrow .vollabel {
+  flex:0 0 96px;
+  font-size:12px;
+  font-weight:600;
+  color:var(--text);
+}
+
+.volrow .volslider {
+  flex:1 1 auto;
+  width:auto;
+}
+
+.volrow .volvalue {
+  flex:0 0 38px;
+  text-align:right;
+  font-size:11px;
+  font-variant-numeric:tabular-nums;
+  color:var(--text-dim);
+}
+
+.volrow[data-enabled="0"] {
+  opacity:0.4;
+}
+
+.volrow[data-enabled="0"] .volslider {
+  pointer-events:none;
+}
+
+.volfoot {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+
+.volnote {
+  font-size:11px;
+  color:var(--text-dim);
+}
+
+.volmute {
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:6px 14px;
+  border-radius:8px;
+  font-size:12px;
+  font-weight:600;
+  color:var(--text);
+  background-color:rgba(255, 255, 255, 0.06);
+  border:1px solid var(--border-strong);
+  cursor:pointer;
+}
+
+.volmute svg {
+  width:13px;
+  height:13px;
+}
+
+.volmute:hover {
+  background-color:rgba(255, 255, 255, 0.1);
+}
+
+.volmute[data-on="1"] {
+  color:var(--accent-bright);
+  background-color:rgba(var(--accent-rgb), 0.18);
+  border-color:var(--accent);
+  box-shadow:0 0 8px rgba(var(--accent-rgb), 0.4);
+}
+
+/* Places > Map: the GPS. the island picture on a sea of its own, a dot with
+   a heading arrow, the region's name and position underneath */
+.maphost {
+  display:none;
+}
+
+.dockroot[data-panel="places"][data-placestab="map"] .maphost {
+  display:flex;
+  flex:1 1 auto;
+  flex-direction:column;
+  align-items:center;
+  gap:10px;
+  padding:12px 16px 10px;
+  min-height:0;
+}
+
+.dockroot[data-panel="places"][data-placestab="map"] .grid,
+.dockroot[data-panel="places"][data-placestab="map"] .foldertabs,
+.dockroot[data-panel="places"][data-placestab="map"] .panelfooter,
+.dockroot[data-panel="places"][data-placestab="map"] .panelsearch {
+  display:none;
+}
+
+.mapframe {
+  position:relative;
+  width:min(100%, 600px);
+  aspect-ratio:4 / 3;
+  max-height:100%;
+  border-radius:12px;
+  overflow:hidden;
+  border:1px solid var(--border-strong);
+  background:radial-gradient(ellipse at 50% 40%, #2b6f86, #173f50 75%);
+  box-shadow:inset 0 0 30px rgba(0, 0, 0, 0.45);
+}
+
+.mapimg {
+  position:absolute;
+  inset:0px;
+  width:100%;
+  height:100%;
+}
+
+.mapdot {
+  position:absolute;
+  width:0px;
+  height:0px;
+  transition:left 900ms linear, top 900ms linear;
+}
+
+/* the heading arrow, centred on the spot, with a pulse under it */
+.mapdot::before {
+  content:'';
+  position:absolute;
+  left:-11px;
+  top:-11px;
+  width:22px;
+  height:22px;
+  border-radius:50%;
+  background-color:rgba(var(--accent-rgb), 0.35);
+  animation:mappulse 1.6s ease-out infinite;
+}
+
+.maparrow {
+  position:absolute;
+  left:-7px;
+  top:-9px;
+  width:14px;
+  height:18px;
+  transform-origin:7px 9px;
+  background-color:var(--accent-bright);
+  clip-path:polygon(50% 0%, 100% 100%, 50% 75%, 0% 100%);
+  filter:drop-shadow(0 0 3px rgba(var(--accent-rgb), 0.9));
+  transition:transform 200ms linear;
+}
+
+@keyframes mappulse {
+  0% { transform:scale(0.5); opacity:1; }
+  100% { transform:scale(1.8); opacity:0; }
+}
+
+.mapinfo {
+  display:flex;
+  align-items:baseline;
+  gap:12px;
+}
+
+.mapname {
+  font-size:15px;
+  font-weight:700;
+  color:var(--text);
+}
+
+.mapcoords {
+  font-size:11px;
+  font-variant-numeric:tabular-nums;
+  color:var(--text-dim);
+}
+
+.mapcredit {
+  margin-top:auto;
+  font-size:9.5px;
+  color:var(--text-dim);
+  opacity:0.7;
+}
+
+/* map zoom and pan: the stage scales from its corner; dot and labels
+   counter-scale (--mapz) so they stay the same size at any zoom */
+.mapframe {
+  --mapz:1;
+  cursor:grab;
+  user-select:none;
+}
+
+.mapframe:active {
+  cursor:grabbing;
+}
+
+.mapstage {
+  position:absolute;
+  inset:0px;
+  transform-origin:0 0;
+}
+
+.mapworld {
+  position:absolute;
+}
+
+.maplabels {
+  position:absolute;
+  inset:0px;
+}
+
+.maplabel {
+  position:absolute;
+  transform:translate(-50%, -50%) scale(calc(1 / var(--mapz)));
+  padding:2px 7px;
+  border-radius:8px;
+  font-size:10px;
+  font-weight:700;
+  white-space:nowrap;
+  color:var(--text);
+  background-color:rgba(0, 0, 0, 0.55);
+  border:1px solid rgba(var(--accent-rgb), 0.5);
+  cursor:pointer;
+}
+
+.maplabel:hover {
+  color:var(--accent-bright);
+  border-color:var(--accent);
+  box-shadow:0 0 8px rgba(var(--accent-rgb), 0.5);
+}
+
+.mapdot {
+  transform:scale(calc(1 / var(--mapz)));
+}
+
+.mapviews {
+  position:absolute;
+  left:8px;
+  top:8px;
+  display:flex;
+  gap:4px;
+}
+
+.mapview,
+.mapzoom {
+  padding:4px 10px;
+  border-radius:8px;
+  font-size:11px;
+  font-weight:600;
+  color:var(--text);
+  background-color:rgba(0, 0, 0, 0.55);
+  border:1px solid var(--border-strong);
+  cursor:pointer;
+}
+
+.mapview:hover,
+.mapzoom:hover {
+  background-color:rgba(0, 0, 0, 0.75);
+}
+
+.mapview[data-active="1"] {
+  color:var(--accent-bright);
+  border-color:var(--accent);
+  box-shadow:0 0 8px rgba(var(--accent-rgb), 0.45);
+}
+
+.mapzoombtns {
+  position:absolute;
+  right:8px;
+  top:8px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.mapzoom {
+  width:26px;
+  padding:3px 0px;
+  text-align:center;
+  font-size:14px;
+  line-height:18px;
+}
+
+/* GPS screen beside the speedo: the island map on a tilted plane seen in
+   perspective, heading-up, with the car fixed low in the screen like a
+   sat-nav. switched in Settings > UI Behaviour */
+.speedo .spdgps {
+  display:none;
+  position:relative;
+  align-self:center;
+  width:176px;
+  height:132px;
+  margin-left:6px;
+  border-radius:14px;
+  overflow:hidden;
+  background-color:#0b1f28;
+  border:1px solid rgba(var(--accent-rgb), 0.55);
+  box-shadow:0 4px 14px rgba(0, 0, 0, 0.55), 0 0 10px rgba(var(--accent-rgb), 0.25),
+    inset 0 0 18px rgba(0, 0, 0, 0.6);
+}
+
+.speedo[data-gps="1"][data-gpsopen="1"] .spdgps {
+  display:block;
+}
+
+/* folded: just a small map button beside the gauge */
+.speedo .spdgpsbtn {
+  display:none;
+  align-self:center;
+  width:16px;
+  height:16px;
+  padding:6px;
+  margin-left:4px;
+  border-radius:50%;
+  color:var(--text-dim);
+  background-color:rgba(0, 0, 0, 0.55);
+  border:1px solid var(--border-strong);
+  cursor:pointer;
+}
+
+.speedo[data-gps="1"] .spdgpsbtn {
+  display:block;
+}
+
+.speedo .spdgpsbtn:hover {
+  color:var(--text);
+}
+
+.speedo[data-gpsopen="1"] .spdgpsbtn {
+  color:var(--accent-bright);
+  border-color:var(--accent);
+  box-shadow:0 0 8px rgba(var(--accent-rgb), 0.45);
+}
+
+/* the 3D view is its own flat layer: a tilted plane's near edge comes
+   toward the viewer and would otherwise cover the car and the name */
+.speedo .gpsview {
+  position:absolute;
+  inset:0px;
+  overflow:hidden;
+  z-index:0;
+  perspective:200px;
+  perspective-origin:50% 20%;
+}
+
+/* the ground: centre of the plane = where you are = the car's spot */
+.speedo .gpsplane {
+  position:absolute;
+  left:calc(50% - 260px);
+  top:calc(68% - 260px);
+  width:520px;
+  height:520px;
+  transform:rotateX(58deg);
+  transform-origin:50% 50%;
+  z-index:0;
+}
+
+.speedo .gpssea {
+  position:absolute;
+  inset:-200px;
+  background-color:#1d5368;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.08) 0px, rgba(255, 255, 255, 0.08) 1px, transparent 1px, transparent 26px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.08) 0px, rgba(255, 255, 255, 0.08) 1px, transparent 1px, transparent 26px);
+}
+
+.speedo .gpsmap {
+  position:absolute;
+  left:0px;
+  top:0px;
+  width:200px;
+  height:150px;
+  transform-origin:0 0;
+}
+
+.speedo .gpsimg {
+  display:block;
+  width:200px;
+  height:150px;
+}
+
+/* distance haze toward the horizon */
+.speedo .gpsfog {
+  z-index:2;
+  position:absolute;
+  inset:0px;
+  pointer-events:none;
+  background:linear-gradient(to bottom, rgba(9, 24, 32, 0.95) 0%, rgba(9, 24, 32, 0.55) 22%, rgba(9, 24, 32, 0) 50%);
+}
+
+.speedo .gpscar {
+  z-index:2;
+  position:absolute;
+  left:50%;
+  top:68%;
+  width:16px;
+  height:20px;
+  margin-left:-8px;
+  margin-top:-12px;
+  background-color:var(--accent-bright);
+  clip-path:polygon(50% 0%, 100% 100%, 50% 74%, 0% 100%);
+  filter:drop-shadow(0 0 4px rgba(var(--accent-rgb), 0.95));
+}
+
+.speedo .gpsname {
+  z-index:2;
+  position:absolute;
+  left:0px;
+  right:0px;
+  bottom:5px;
+  text-align:center;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:0.5px;
+  color:var(--text);
+  text-shadow:0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.speedo .spdgpsbtn svg {
+  display:block;
+  width:100%;
+  height:100%;
 }

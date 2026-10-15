@@ -1,0 +1,61 @@
+/* ThereModernUI - tmui-skin.css (generated + header)
+   The ModernUI palette laid over the stock page. Loaded after the stock css,
+   so it only overrides colors; stock logic and layout stay untouched.
+   Author: DANKIES */
+
+:root {
+  --tint: 17, 21, 28;
+  --tint-raised: 28, 35, 45;
+  --accent: #38bdf8;
+  --accent-bright: #bae6fd;
+  --accent-rgb: 56, 189, 248;
+  --text: #e8edf2;
+  --text-dim: #93a1ae;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.20);
+}
+
+body {
+  font-family:'Segoe UI', system-ui, sans-serif;
+  color:var(--text);
+}
+
+body {
+  color:var(--text);
+}
+
+.dialog {
+  background-color:rgba(var(--tint), 0.92);
+}
+
+.dialog .titlebar {
+  border:1px solid var(--border-strong);
+}
+
+.dialog .titlebar .buttons .button {
+  border:1px solid var(--border);
+}
+
+.panel {
+  border:1px solid var(--border);
+}
+
+.modes .tabs .tab {
+  border:1px solid var(--border);
+}
+
+.panel .textbox {
+  border:1px solid var(--border);
+}
+
+.panel .textbox input[type="text"] {
+  border:1px solid var(--border);
+}
+
+.footer .button {
+  border:1px solid var(--border);
+}
+
+.footer .bar {
+  border:1px solid var(--border-strong);
+}

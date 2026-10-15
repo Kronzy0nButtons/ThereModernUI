@@ -1,0 +1,199 @@
+/* ThereModernUI - tmui-skin.css (generated + header)
+   The ModernUI palette laid over the stock page. Loaded after the stock css,
+   so it only overrides colors; stock logic and layout stay untouched.
+   Author: DANKIES */
+
+:root {
+  --tint: 17, 21, 28;
+  --tint-raised: 28, 35, 45;
+  --accent: #38bdf8;
+  --accent-bright: #bae6fd;
+  --accent-rgb: 56, 189, 248;
+  --text: #e8edf2;
+  --text-dim: #93a1ae;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.20);
+}
+
+body {
+  font-family:'Segoe UI', system-ui, sans-serif;
+  color:var(--text);
+}
+
+body {
+  color:var(--text);
+}
+
+.changeme svg.background g {
+  fill:rgba(var(--tint), 0.94);
+}
+
+.changeme .titlebar {
+  border-bottom:1px solid var(--border-strong);
+}
+
+.changeme .titlebar .buttons .button {
+  border:1px solid var(--border);
+}
+
+.areas {
+  background-color:rgba(0, 0, 0, 0.30);
+  border:1px solid var(--border);
+}
+
+.areas .arrow {
+  border:1px solid var(--border-strong);
+}
+
+.sections .section {
+  border:1px solid var(--border);
+  background-color:rgb(var(--tint-raised));
+}
+
+.sections .section .tab {
+  border:1px solid var(--border);
+  background-color:rgb(var(--tint-raised));
+}
+
+.changeme[data-section="body"] .sections .section[data-section="body"], .changeme[data-section="wardrobe"] .sections .section[data-section="wardrobe"] {
+  background-color:rgba(var(--accent-rgb), 0.22);
+}
+
+.changeme[data-section="body"] .sections .section[data-section="body"] .tab, .changeme[data-section="wardrobe"] .sections .section[data-section="wardrobe"] .tab {
+  background-color:rgba(var(--accent-rgb), 0.22);
+}
+
+.sections .section[data-section="wardrobe"] .panel {
+  background-color:rgba(0, 0, 0, 0.30);
+  border:1px solid var(--border);
+}
+
+.sections .section[data-section="wardrobe"] .panel .title {
+  background-color:rgba(255, 255, 255, 0.06);
+  color:var(--text);
+  border-bottom:1px solid var(--border);
+}
+
+.sections .section[data-section="wardrobe"] .panel .items .item {
+  border-bottom:1px dashed var(--border);
+}
+
+.sections .section[data-section="wardrobe"] .panel .items .item[data-hover="1"], .sections .section[data-section="wardrobe"] .panel .items .item:hover {
+  background-color:rgba(255, 255, 255, 0.08);
+}
+
+.sections .section[data-section="wardrobe"] .panel .items .item[data-selected="1"] {
+  background-color:rgba(var(--accent-rgb), 0.22);
+}
+
+.sections .section[data-section="body"] .panel {
+  background-color:rgba(0, 0, 0, 0.30);
+  border:1px solid var(--border);
+}
+
+.sections .section[data-section="body"] .panel .title {
+  background-color:rgba(255, 255, 255, 0.06);
+  color:var(--text);
+  border-bottom:1px solid var(--border);
+}
+
+.changeme[data-area="head"] .sections .section[data-section="body"] .panel .editor[data-area="head"] {
+  background-color:rgba(255, 255, 255, 0.07);
+}
+
+.changeme[data-area="face"] .sections .section[data-section="body"] .panel .editor[data-area="face"] {
+  background-color:rgba(255, 255, 255, 0.07);
+}
+
+.subareas .subarea {
+  background-color:rgba(0, 0, 0, 0.30);
+  border:1px solid var(--border);
+}
+
+.subareas[data-active="1"] .subarea:hover {
+  background-color:rgba(255, 255, 255, 0.08);
+}
+
+.changeme[data-area="face"][data-subarea="eyes-ears"] .subareas[data-active="1"] .subarea[data-subarea="eyes-ears"], .changeme[data-area="face"][data-subarea="nose"] .subareas[data-active="1"] .subarea[data-subarea="nose"], .changeme[data-area="face"][data-subarea="chin-cheeks"] .subareas[data-active="1"] .subarea[data-subarea="chin-cheeks"], .changeme[data-area="face"][data-subarea="mouth"] .subareas[data-active="1"] .subarea[data-subarea="mouth"] {
+  background-color:rgba(var(--accent-rgb), 0.22);
+}
+
+.changeme[data-area="face"][data-subarea] .subareas[data-active="1"] .menu:hover:active .subarea[data-subarea] {
+  background-color:rgba(0, 0, 0, 0.30);
+}
+
+.changeme[data-area="face"][data-subarea] .subareas[data-active="1"] .menu .subarea[data-subarea]:hover:active {
+  background-color:rgba(var(--accent-rgb), 0.22);
+}
+
+.subareas .button {
+  border:1px solid var(--border);
+}
+
+.changeme[data-area="body"] .sections .section[data-section="body"] .panel .editor[data-area="body"] {
+  background-color:rgba(255, 255, 255, 0.07);
+}
+
+.changeme[data-area="skin"] .sections .section[data-section="body"] .panel .editor[data-area="skin"] {
+  background-color:rgba(255, 255, 255, 0.07);
+}
+
+.sections .section[data-section="body"] .panel .editor[data-area="skin"] .item:hover {
+  background-color:rgba(0, 0, 0, 0.24);
+}
+
+.sections .section[data-section="body"] .panel .editor[data-area="skin"] .item[data-selected="1"] {
+  border-top:1px solid var(--border);
+  border-bottom:1px solid var(--border);
+  background-color:rgba(0, 0, 0, 0.30);
+}
+
+.sections .section[data-section="body"] .panel .editor[data-area="skin"] .item .icon {
+  border:1px solid var(--border-strong);
+}
+
+.sections .section[data-section="body"] .panel .items[data-area="looksets"] .item {
+  border-bottom:1px dashed var(--border);
+}
+
+.sections .section[data-section="body"] .panel .items[data-area="looksets"] .item[data-hover="1"], .sections .section[data-section="body"] .panel .items[data-area="looksets"] .item:hover {
+  background-color:rgba(255, 255, 255, 0.08);
+}
+
+.sections .section[data-section="body"] .panel .items[data-area="looksets"] .item[data-selected="1"] {
+  background-color:rgba(var(--accent-rgb), 0.22);
+}
+
+.sections .section[data-section="body"] .spa .link {
+  color:var(--accent);
+}
+
+.slider .knob {
+  border:1px solid var(--border);
+}
+
+.footer .button {
+  border:1px solid var(--border);
+}
+
+.changeme[data-section="body"]:not([data-treatmentsenabled="1"]) .footer .button[data-id="save"], .changeme[data-section="body"]:not([data-treatmentsenabled="1"]) .footer .button[data-id="save"]:hover, .changeme[data-section="body"]:not([data-treatmentsenabled="1"]) .footer .button[data-id="save"]:active, .footer .button[data-enabled="0"], .footer .button[data-enabled="0"]:hover, .footer .button[data-enabled="0"]:active {
+  color:var(--text-dim);
+}
+
+.contextmenu .item {
+  background-color:rgba(0, 0, 0, 0.30);
+  border:1px solid var(--border);
+}
+
+.contextmenu .item:hover {
+  background-color:rgba(255, 255, 255, 0.08);
+}
+
+.contextmenu .item:hover:active {
+  background-color:rgba(var(--accent-rgb), 0.22);
+}
+
+.contextmenu .item[data-enabled="0"]:hover, .contextmenu .item[data-enabled="0"]:active, .contextmenu .item[data-enabled="0"] {
+  color:var(--text-dim);
+  background-color:rgba(0, 0, 0, 0.30);
+}

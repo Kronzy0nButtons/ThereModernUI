@@ -141,4 +141,11 @@ the key shows up anywhere staged.
 - **Icons** - Font Awesome Free (CC BY 4.0).
 - **Notification sound** - Universfield.
 - **GIFs** - Powered by KLIPY (KLIPY API terms apply).
+- **Music** - Search and audio streams via [Piped](https://github.com/TeamPiped/Piped),
+  the open source YouTube front end (nothing from it is bundled).
+- **Maps** - Region boundaries and calibration from Myrmex GPS (2007); the
+  island map images are There.com map art from it.
+- **Slash commands** - The command list is TheChaz's Command Bar
+  (`shortcutbar2.json`), read from the player's own install at runtime. None
+  of the Command Bar's files are shipped or changed.
 - **Testers** - erick758, Edith, bubblegumgirl.

@@ -1,5 +1,5 @@
 diff --git a/FlashProxy/FlashProxy.cpp b/FlashProxy/FlashProxy.cpp
-index 7eb4acb..58a62c9 100644
+index 7eb4acb..28f6513 100644
 --- a/FlashProxy/FlashProxy.cpp
 +++ b/FlashProxy/FlashProxy.cpp
 @@ -19,6 +19,7 @@
@@ -10,7 +10,14 @@ index 7eb4acb..58a62c9 100644
  #include "versionhelpers.h"
  #include "FlashRequestProxy.h"
  #include "FlashProxy_i.h"
-@@ -34,6 +35,635 @@ FlashProxyModule g_AtlModule;
+@@ -29,11 +30,1165 @@
+ #define WM_FLASHPROXY_SET_TELEPORTING    (WM_USER + 3)
+ #define WM_FLASHPROXY_GET_IDENTITY       (WM_USER + 4)
+ #define WM_FLASHPROXY_GET_ABOUT          (WM_USER + 5)
++// ThereModernUI: a web/file lane job finished, deliver it (posted by workers)
++#define WM_TMUI_WEB_DELIVER              (WM_USER + 6)
+ 
+ FlashProxyModule g_AtlModule;
  HINSTANCE g_Instance;
  WCHAR FlashProxyModule::g_WindowClassName[] = L"ThereEdgeFlashProxy";
  
@@ -42,11 +49,36 @@ index 7eb4acb..58a62c9 100644
 +    InterlockedExchange(&g_tmuiReaderSeen, 1);
 +}
 +
++// pages that have read the feed for the dock: when one closes, the dock
++// takes the feed back at once
++static ATL::CSimpleArray<void *> g_tmuiReaders;
++static volatile LONG g_tmuiReaderGone = 0;
++
++void TmuiRelayNoteReader(void *owner)
++{
++    g_tmuiRelayLock.Lock();
++    if (g_tmuiReaders.Find(owner) < 0)
++        g_tmuiReaders.Add(owner);
++    g_tmuiRelayLock.Unlock();
++}
++
++void TmuiRelayReaderGone(void *owner)
++{
++    g_tmuiRelayLock.Lock();
++    bool was = g_tmuiReaders.Remove(owner) != FALSE;
++    g_tmuiRelayLock.Unlock();
++    if (was)
++        InterlockedExchange(&g_tmuiReaderGone, 1);
++}
++
 +// a feed request from a page that isn't one of ours, while the dock is listening
 +bool TmuiRelayWanted(void *owner)
 +{
-+    return g_tmuiSubscribers.GetSize() > 0 &&
++    bool wanted = g_tmuiSubscribers.GetSize() > 0 &&
 +        g_tmuiSubscribers.Find(static_cast<FlashProxyModule *>(owner)) < 0;
++    if (wanted)
++        TmuiRelayNoteReader(owner);
++    return wanted;
 +}
 +
 +// any thread: queue it, TmuiRelayDeliver sends it from the UI thread
@@ -77,6 +109,10 @@ index 7eb4acb..58a62c9 100644
 +    CComPtr<ICoreWebView2Environment> env;
 +    CStringW path;
 +    CStringA data;
++    CStringW file;     // file lane: the disk file to answer with (webapps lane: empty)
++    CStringW ctype;    // content type of the answer
++    HWND wnd;          // proxy window of the asking module: delivery is posted
++                       // here, so it works before any page starts the timer
 +    volatile LONG done;
 +    bool ok;
 +};
@@ -117,7 +153,110 @@ index 7eb4acb..58a62c9 100644
 +        }
 +        InternetCloseHandle(session);
 +    }
++    // read the window first: once done is set the UI thread may free the job
++    HWND wnd = job->wnd;
 +    InterlockedExchange(&job->done, 1);
++    if (wnd != nullptr)
++        PostMessage(wnd, WM_TMUI_WEB_DELIVER, 0, 0);
++    return 0;
++}
++
++// ThereModernUI: the file lane. The stock path binds every file a control
++// requests through URLMon on the client's UI thread, and a Windows 11 update
++// made that bind stall for ~8 seconds per request, freezing the 3D world
++// while a control loads (the rubberbanding in There's changelog). Static
++// control files are plain files on disk next to the client, so one worker
++// thread reads them directly instead: off the UI thread a stall cannot touch
++// the simulation, and a disk read does not go near the component that stalls.
++static ATL::CSimpleArray<TmuiWebJob*> g_tmuiFileQueue;
++static HANDLE g_tmuiFileEvent = nullptr;
++static HANDLE g_tmuiFileThread = nullptr;
++static WCHAR g_tmuiFileBase[MAX_PATH] = {0};
++
++static const WCHAR *TmuiFileType(const WCHAR *ext)
++{
++    static const struct { const WCHAR *ext; const WCHAR *type; } types[] =
++    {
++        {L"html",  L"text/html"},
++        {L"css",   L"text/css"},
++        {L"js",    L"application/javascript"},
++        {L"png",   L"image/png"},
++        {L"jpg",   L"image/jpeg"},
++        {L"jpeg",  L"image/jpeg"},
++        {L"gif",   L"image/gif"},
++        {L"svg",   L"image/svg+xml"},
++        {L"ico",   L"image/x-icon"},
++        {L"swf",   L"application/vnd.adobe.flash.movie"},
++        {L"wasm",  L"application/wasm"},
++        {L"woff",  L"font/woff"},
++        {L"woff2", L"font/woff2"},
++        {L"ttf",   L"font/ttf"},
++        {L"otf",   L"font/otf"},
++        {L"mp3",   L"audio/mpeg"},
++        {L"wav",   L"audio/wav"},
++        {L"ogg",   L"audio/ogg"},
++    };
++    for (int i = 0; i < _countof(types); ++i)
++    {
++        if (_wcsicmp(ext, types[i].ext) == 0)
++            return types[i].type;
++    }
++    return nullptr;
++}
++
++static DWORD WINAPI TmuiFileThread(LPVOID)
++{
++    for (;;)
++    {
++        WaitForSingleObject(g_tmuiFileEvent, INFINITE);
++        for (;;)
++        {
++            TmuiWebJob *job = nullptr;
++            g_tmuiWebLock.Lock();
++            if (g_tmuiFileQueue.GetSize() > 0)
++            {
++                job = g_tmuiFileQueue[0];
++                g_tmuiFileQueue.RemoveAt(0);
++            }
++            g_tmuiWebLock.Unlock();
++            if (job == nullptr)
++                break;
++
++            // two attempts: the file can be mid-copy while the mod updates
++            for (int attempt = 0; attempt < 2 && !job->ok; ++attempt)
++            {
++                HANDLE file = CreateFile(job->file, GENERIC_READ,
++                                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++                                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
++                if (file == INVALID_HANDLE_VALUE)
++                    continue;
++
++                LARGE_INTEGER size = {};
++                if (GetFileSizeEx(file, &size) && size.QuadPart >= 0 && size.QuadPart <= 64 * 1024 * 1024)
++                {
++                    DWORD want = static_cast<DWORD>(size.QuadPart);
++                    char *buffer = job->data.GetBuffer(static_cast<int>(want));
++                    DWORD total = 0;
++                    while (total < want)
++                    {
++                        DWORD got = 0;
++                        if (!ReadFile(file, buffer + total, want - total, &got, nullptr) || got == 0)
++                            break;
++                        total += got;
++                    }
++                    job->data.ReleaseBufferSetLength(static_cast<int>(total));
++                    job->ok = total == want;
++                }
++                CloseHandle(file);
++            }
++            // read the window first: once done is set the UI thread may free
++            // the job
++            HWND wnd = job->wnd;
++            InterlockedExchange(&job->done, 1);
++            if (wnd != nullptr)
++                PostMessage(wnd, WM_TMUI_WEB_DELIVER, 0, 0);
++        }
++    }
 +    return 0;
 +}
 +
@@ -133,6 +272,8 @@ index 7eb4acb..58a62c9 100644
 +    job->env = m_environment;
 +    job->path = L"/";
 +    job->path += rest;
++    job->ctype = L"text/xml";
++    job->wnd = m_proxyWnd;
 +    job->done = 0;
 +    job->ok = false;
 +
@@ -146,6 +287,369 @@ index 7eb4acb..58a62c9 100644
 +    else
 +        CloseHandle(thread);
 +    return S_OK;
++}
++
++HRESULT FlashProxyModule::TmuiFileFetch(ICoreWebView2WebResourceRequestedEventArgs *args, const WCHAR *path)
++{
++    // kill switch: TMUI_FILELANE=0 puts every request back on the stock bind
++    static LONG enabled = -1;
++    if (enabled < 0)
++    {
++        WCHAR value[8] = {0};
++        GetEnvironmentVariable(L"TMUI_FILELANE", value, _countof(value));
++        enabled = wcscmp(value, L"0") == 0 ? 0 : 1;
++    }
++    // no proxy window means no posted delivery: leave it to the stock bind
++    if (enabled == 0 || m_proxyWnd == nullptr || !IsWindow(m_proxyWnd))
++        return S_FALSE;
++
++    if (path == nullptr || path[0] != L'/' || wcsstr(path, L"..") != nullptr)
++        return S_FALSE;
++
++    CStringW rel(path + 1);
++    int cut = rel.FindOneOf(L"?#");
++    if (cut >= 0)
++        rel = rel.Left(cut);
++
++    int dot = rel.ReverseFind(L'.');
++    const WCHAR *type = dot >= 0 ? TmuiFileType(rel.GetString() + dot + 1) : nullptr;
++    if (type == nullptr)
++        return S_FALSE;
++
++    // control files resolve against the client's working directory (the
++    // movie probe in put_Movie leans on the same fact); pin that root once
++    if (g_tmuiFileBase[0] == 0 && GetCurrentDirectory(_countof(g_tmuiFileBase), g_tmuiFileBase) == 0)
++        return S_FALSE;
++
++    rel.Replace(L'/', L'\\');
++    CStringW full(g_tmuiFileBase);
++    full += L'\\';
++    full += rel;
++
++    DWORD attributes = GetFileAttributes(full);
++    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
++        return S_FALSE;    // not a plain file here, the stock bind knows better
++
++    g_tmuiWebLock.Lock();
++    if (g_tmuiFileEvent == nullptr)
++        g_tmuiFileEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
++    if (g_tmuiFileThread == nullptr && g_tmuiFileEvent != nullptr)
++        g_tmuiFileThread = CreateThread(nullptr, 0, TmuiFileThread, nullptr, 0, nullptr);
++    bool ready = g_tmuiFileThread != nullptr;
++    g_tmuiWebLock.Unlock();
++    if (!ready)
++        return S_FALSE;
++
++    CComPtr<ICoreWebView2Deferral> deferral;
++    if (FAILED(args->GetDeferral(&deferral)) || deferral == nullptr)
++        return S_FALSE;
++
++    TmuiWebJob *job = new TmuiWebJob();
++    job->args = args;
++    job->deferral = deferral;
++    job->env = m_environment;
++    job->file = full;
++    job->ctype = type;
++    job->wnd = m_proxyWnd;
++    job->done = 0;
++    job->ok = false;
++
++    g_tmuiWebLock.Lock();
++    g_tmuiWebJobs.Add(job);
++    g_tmuiFileQueue.Add(job);
++    g_tmuiWebLock.Unlock();
++    SetEvent(g_tmuiFileEvent);
++    return S_OK;
++}
++
++// ThereModernUI: the picture store. Catalog photos (wardrobe, inventory) are
++// kept on disk under %LOCALAPPDATA%\There\TmuiImages and served from there,
++// so each one is downloaded once, ever, instead of every time the browser
++// cache forgets it. A small pool of workers fetches the missing ones from
++// webapps.prod.there.com: the dock's live requests jump the queue, and the
++// dock hands over its whole item list after login (tmuiPrefetch) so the
++// photos are usually on disk before the panel even opens.
++static ATL::CSimpleArray<TmuiWebJob*> g_tmuiImgQueue;
++static HANDLE g_tmuiImgSem = nullptr;
++static bool g_tmuiImgStarted = false;
++static WCHAR g_tmuiImgDir[MAX_PATH] = {0};
++
++static bool TmuiImgName(const WCHAR *name)
++{
++    size_t len = name != nullptr ? wcslen(name) : 0;
++    if (len < 5 || len > 120 || wcsstr(name, L"..") != nullptr)
++        return false;
++    for (size_t i = 0; i < len; ++i)
++    {
++        WCHAR c = name[i];
++        if (!((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') ||
++              c == L'.' || c == L'_' || c == L'-'))
++            return false;
++    }
++    const WCHAR *ext = wcsrchr(name, L'.');
++    return ext != nullptr && (_wcsicmp(ext, L".gif") == 0 || _wcsicmp(ext, L".jpg") == 0 ||
++                              _wcsicmp(ext, L".jpeg") == 0 || _wcsicmp(ext, L".png") == 0);
++}
++
++static bool TmuiImgDirReady()
++{
++    if (g_tmuiImgDir[0] != 0)
++        return true;
++    WCHAR dir[MAX_PATH] = {0};
++    if (FAILED(SHGetFolderPath(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, dir)) || dir[0] == 0)
++        return false;
++    if (!PathAppend(dir, L"There"))
++        return false;
++    CreateDirectory(dir, nullptr);
++    if (!PathAppend(dir, L"TmuiImages"))
++        return false;
++    CreateDirectory(dir, nullptr);
++    if (GetFileAttributes(dir) == INVALID_FILE_ATTRIBUTES)
++        return false;
++    wcscpy_s(g_tmuiImgDir, dir);
++    return true;
++}
++
++static bool TmuiReadWhole(const WCHAR *path, CStringA &out)
++{
++    HANDLE file = CreateFile(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++                             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
++    if (file == INVALID_HANDLE_VALUE)
++        return false;
++    bool ok = false;
++    LARGE_INTEGER size = {};
++    if (GetFileSizeEx(file, &size) && size.QuadPart > 0 && size.QuadPart <= 8 * 1024 * 1024)
++    {
++        DWORD want = static_cast<DWORD>(size.QuadPart);
++        char *buffer = out.GetBuffer(static_cast<int>(want));
++        DWORD total = 0;
++        while (total < want)
++        {
++            DWORD got = 0;
++            if (!ReadFile(file, buffer + total, want - total, &got, nullptr) || got == 0)
++                break;
++            total += got;
++        }
++        out.ReleaseBufferSetLength(static_cast<int>(total));
++        ok = total == want;
++    }
++    CloseHandle(file);
++    return ok;
++}
++
++static DWORD WINAPI TmuiImgThread(LPVOID)
++{
++    // one session per worker: the connection to the image host is reused
++    HINTERNET session = InternetOpen(L"ThereModernUI", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
++    HINTERNET connection = session != nullptr ?
++        InternetConnect(session, L"webapps.prod.there.com", INTERNET_DEFAULT_HTTPS_PORT,
++                        nullptr, nullptr, INTERNET_SERVICE_HTTP, 0, 0) : nullptr;
++    for (;;)
++    {
++        WaitForSingleObject(g_tmuiImgSem, INFINITE);
++        TmuiWebJob *job = nullptr;
++        g_tmuiWebLock.Lock();
++        if (g_tmuiImgQueue.GetSize() > 0)
++        {
++            job = g_tmuiImgQueue[0];
++            g_tmuiImgQueue.RemoveAt(0);
++        }
++        g_tmuiWebLock.Unlock();
++        if (job == nullptr)
++            continue;
++
++        bool have = TmuiReadWhole(job->file, job->data);
++        if (!have && connection != nullptr)
++        {
++            CStringW path(L"/catalog/media/");
++            path += job->path;
++            HINTERNET request = HttpOpenRequest(connection, L"GET", path, nullptr, nullptr, nullptr,
++                                                INTERNET_FLAG_SECURE | INTERNET_FLAG_NO_COOKIES |
++                                                INTERNET_FLAG_KEEP_CONNECTION | INTERNET_FLAG_NO_CACHE_WRITE, 0);
++            if (request != nullptr)
++            {
++                DWORD status = 0;
++                DWORD statusLen = sizeof(status);
++                if (HttpSendRequest(request, nullptr, 0, nullptr, 0) &&
++                    HttpQueryInfo(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &statusLen, nullptr) &&
++                    status == 200)
++                {
++                    CStringA body;
++                    char buffer[16384];
++                    DWORD got = 0;
++                    while (InternetReadFile(request, buffer, sizeof(buffer), &got) && got > 0)
++                    {
++                        body.Append(buffer, got);
++                        if (body.GetLength() > 8 * 1024 * 1024)
++                            break;
++                    }
++                    if (body.GetLength() > 0 && body.GetLength() <= 8 * 1024 * 1024)
++                    {
++                        // write beside it, then swap in: a half-written file
++                        // is never served
++                        WCHAR part[MAX_PATH + 32];
++                        _snwprintf_s(part, _countof(part), _TRUNCATE, L"%s.%lu.part",
++                                     job->file.GetString(), GetCurrentThreadId());
++                        HANDLE file = CreateFile(part, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
++                                                 FILE_ATTRIBUTE_NORMAL, nullptr);
++                        if (file != INVALID_HANDLE_VALUE)
++                        {
++                            DWORD wrote = 0;
++                            BOOL written = WriteFile(file, body.GetString(), body.GetLength(), &wrote, nullptr);
++                            CloseHandle(file);
++                            if (written && wrote == static_cast<DWORD>(body.GetLength()))
++                                MoveFileEx(part, job->file, MOVEFILE_REPLACE_EXISTING);
++                            else
++                                DeleteFile(part);
++                        }
++                        job->data = body;
++                        have = true;
++                    }
++                }
++                InternetCloseHandle(request);
++            }
++        }
++
++        if (job->args == nullptr)
++        {
++            // a prefetch: nobody is waiting on it
++            delete job;
++            continue;
++        }
++        job->ok = have;
++        HWND wnd = job->wnd;
++        InterlockedExchange(&job->done, 1);
++        if (wnd != nullptr)
++            PostMessage(wnd, WM_TMUI_WEB_DELIVER, 0, 0);
++    }
++    return 0;
++}
++
++static bool TmuiImgStart()
++{
++    if (!TmuiImgDirReady())
++        return false;
++    g_tmuiWebLock.Lock();
++    if (!g_tmuiImgStarted)
++    {
++        g_tmuiImgSem = CreateSemaphore(nullptr, 0, 0x7FFFFFFF, nullptr);
++        if (g_tmuiImgSem != nullptr)
++        {
++            for (int i = 0; i < 4; ++i)
++            {
++                HANDLE thread = CreateThread(nullptr, 0, TmuiImgThread, nullptr, 0, nullptr);
++                if (thread != nullptr)
++                    CloseHandle(thread);
++            }
++            g_tmuiImgStarted = true;
++        }
++    }
++    bool ready = g_tmuiImgStarted;
++    g_tmuiWebLock.Unlock();
++    return ready;
++}
++
++static TmuiWebJob *TmuiImgJob(const WCHAR *name)
++{
++    TmuiWebJob *job = new TmuiWebJob();
++    job->path = name;
++    job->file = g_tmuiImgDir;
++    job->file += L'\\';
++    job->file += name;
++    const WCHAR *ext = wcsrchr(name, L'.');
++    const WCHAR *type = TmuiFileType(ext != nullptr ? ext + 1 : L"");
++    job->ctype = type != nullptr ? type : L"application/octet-stream";
++    job->wnd = nullptr;
++    job->done = 0;
++    job->ok = false;
++    return job;
++}
++
++// /tmui-img/<name>: on disk = the file lane (instant), else a worker fetches
++// and keeps it, this request first in line
++HRESULT FlashProxyModule::TmuiImgFetch(ICoreWebView2WebResourceRequestedEventArgs *args, const WCHAR *name)
++{
++    if (!TmuiImgName(name) || m_proxyWnd == nullptr || !TmuiImgStart())
++    {
++        CComPtr<ICoreWebView2WebResourceResponse> response;
++        if (SUCCEEDED(m_environment->CreateWebResourceResponse(nullptr, 404, L"Not Found", L"", &response)) &&
++            response != nullptr)
++            args->put_Response(response);
++        return S_OK;
++    }
++
++    CComPtr<ICoreWebView2Deferral> deferral;
++    if (FAILED(args->GetDeferral(&deferral)) || deferral == nullptr)
++        return E_FAIL;
++
++    TmuiWebJob *job = TmuiImgJob(name);
++    job->args = args;
++    job->deferral = deferral;
++    job->env = m_environment;
++    job->wnd = m_proxyWnd;
++
++    // the file lane's reader may not be up yet: the image workers read the
++    // disk too, so they take it then
++    bool onDisk = GetFileAttributes(job->file) != INVALID_FILE_ATTRIBUTES;
++    g_tmuiWebLock.Lock();
++    bool lane = onDisk && g_tmuiFileThread != nullptr && g_tmuiFileEvent != nullptr;
++    g_tmuiWebJobs.Add(job);
++    if (lane)
++    {
++        g_tmuiFileQueue.Add(job);
++    }
++    else
++    {
++        // live requests go ahead of any prefetch backlog
++        g_tmuiImgQueue.Add(job);
++        for (int i = g_tmuiImgQueue.GetSize() - 1; i > 0; --i)
++        {
++            if (g_tmuiImgQueue[i - 1]->args != nullptr)
++                break;
++            TmuiWebJob *swap = g_tmuiImgQueue[i - 1];
++            g_tmuiImgQueue.SetAtIndex(i - 1, g_tmuiImgQueue[i]);
++            g_tmuiImgQueue.SetAtIndex(i, swap);
++        }
++    }
++    g_tmuiWebLock.Unlock();
++    if (lane)
++        SetEvent(g_tmuiFileEvent);
++    else
++        ReleaseSemaphore(g_tmuiImgSem, 1, nullptr);
++    return S_OK;
++}
++
++// tmuiPrefetch?files=a|b|c: queue the ones not on disk yet, nobody waits
++void FlashProxyModule::TmuiImgPrefetch(const WCHAR *query)
++{
++    if (query == nullptr || _wcsnicmp(query, L"files=", 6) != 0 || !TmuiImgStart())
++        return;
++    CStringW list(query + 6);
++    list.Replace(L"%7C", L"|");
++    list.Replace(L"%7c", L"|");
++    int queued = 0;
++    int pos = 0;
++    CStringW name = list.Tokenize(L"|", pos);
++    while (!name.IsEmpty() && queued < 2000)
++    {
++        if (TmuiImgName(name))
++        {
++            TmuiWebJob *job = TmuiImgJob(name);
++            if (GetFileAttributes(job->file) != INVALID_FILE_ATTRIBUTES)
++            {
++                delete job;
++            }
++            else
++            {
++                g_tmuiWebLock.Lock();
++                g_tmuiImgQueue.Add(job);
++                g_tmuiWebLock.Unlock();
++                ReleaseSemaphore(g_tmuiImgSem, 1, nullptr);
++                ++queued;
++            }
++        }
++        name = list.Tokenize(L"|", pos);
++    }
 +}
 +
 +void FlashProxyModule::TmuiWebDeliver()
@@ -171,8 +675,12 @@ index 7eb4acb..58a62c9 100644
 +            stream.Attach(SHCreateMemStream(reinterpret_cast<const BYTE*>(job->data.GetString()), job->data.GetLength()));
 +        CComPtr<ICoreWebView2WebResourceResponse> response;
 +        if (job->env != nullptr)
++        {
++            CStringW headers(L"Content-Type: ");
++            headers += job->ctype.IsEmpty() ? L"text/xml" : job->ctype.GetString();
 +            job->env->CreateWebResourceResponse(stream, job->ok ? 200 : 502, job->ok ? L"OK" : L"Bad Gateway",
-+                                                L"Content-Type: text/xml", &response);
++                                                headers, &response);
++        }
 +        if (response != nullptr)
 +            job->args->put_Response(response);
 +        job->deferral->Complete();
@@ -182,6 +690,11 @@ index 7eb4acb..58a62c9 100644
 +
 +void FlashProxyModule::TmuiRelayDeliver()
 +{
++    if (InterlockedExchange(&g_tmuiReaderGone, 0))
++    {
++        for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++            g_tmuiSubscribers[j]->TmuiPostVariable(L"tmui_chatreader", L"0");
++    }
 +    if (InterlockedExchange(&g_tmuiReaderSeen, 0))
 +    {
 +        WCHAR seq[32];
@@ -292,6 +805,23 @@ index 7eb4acb..58a62c9 100644
 +            for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
 +                g_tmuiSubscribers[j]->TmuiPostVariable(L"tmui_rmb", rmb ? L"1" : L"0");
 +        }
++    }
++
++    // Delete in game = get out of the vehicle: tell the dock the moment it's
++    // pressed so the tacho's needle drops with the engine, not a seat check
++    // later. a counter, so every press is a change the page sees
++    {
++        static bool delLast = false;
++        static LONG delCount = 0;
++        bool del = active && !modifiers && GetAsyncKeyState(VK_DELETE) < 0;
++        if (del && !delLast)
++        {
++            WCHAR count[16];
++            _snwprintf_s(count, _countof(count), _TRUNCATE, L"%ld", ++delCount);
++            for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++                g_tmuiSubscribers[j]->TmuiPostVariable(L"tmui_getout", count);
++        }
++        delLast = del;
 +    }
 +
 +    TmuiKeymapTick(active);
@@ -646,7 +1176,7 @@ index 7eb4acb..58a62c9 100644
  void Log(const WCHAR *format, ...)
  {
  #ifdef THERE_LOGGING
-@@ -123,6 +753,10 @@ FlashProxyModule::FlashProxyModule():
+@@ -123,6 +1278,10 @@ FlashProxyModule::FlashProxyModule():
      m_clientWnd(nullptr),
      m_maskRects(),
      m_maskRectCount(0),
@@ -657,10 +1187,12 @@ index 7eb4acb..58a62c9 100644
      m_encodeBuffer(),
      m_identity(Identity::Unknown),
      m_visibilityMask(0),
-@@ -165,6 +799,12 @@ FlashProxyModule::FlashProxyModule():
+@@ -165,6 +1324,14 @@ FlashProxyModule::FlashProxyModule():
  
  FlashProxyModule::~FlashProxyModule()
  {
++    // ThereModernUI: a page that read the chat feed for the dock is closing
++    TmuiRelayReaderGone(this);
 +    // ThereModernUI: unsubscribe, stop the timer if nobody's left
 +    if (g_tmuiSubscribers.Remove(this) && (g_tmuiTimerWnd == nullptr || g_tmuiTimerWnd == m_proxyWnd))
 +        TmuiStartTimer();
@@ -670,7 +1202,7 @@ index 7eb4acb..58a62c9 100644
      if (m_view != nullptr)
      {
          m_view->remove_WebMessageReceived(m_webMessageReceivedToken);
-@@ -513,7 +1153,13 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::DoVerb(LONG iVerb, LPMSG lpmsg, IOle
+@@ -513,7 +1680,16 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::DoVerb(LONG iVerb, LPMSG lpmsg, IOle
                  }
              }
  
@@ -679,13 +1211,16 @@ index 7eb4acb..58a62c9 100644
 +            // (toast sound, music). EdgeFlash is only used by the HUD.
 +            auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
 +            if (options != nullptr)
-+                options->put_AdditionalBrowserArguments(L"--autoplay-policy=no-user-gesture-required");
++                // ThereModernUI: hidden pages (the headless ChangeMe shim) must
++                // keep their 2s heartbeat; intensive throttling clamps hidden
++                // timers to once a minute after a few minutes
++                options->put_AdditionalBrowserArguments(L"--autoplay-policy=no-user-gesture-required --disable-features=IntensiveWakeUpThrottling");
 +
 +            if (FAILED(CreateCoreWebView2EnvironmentWithOptions(m_webView2Folder, m_userDataFolder, options.Get(), this)))
                  return E_FAIL;
  
              return S_OK;
-@@ -580,6 +1226,23 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::QueryHitPoint(DWORD dwAspect, LPCREC
+@@ -580,6 +1756,23 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::QueryHitPoint(DWORD dwAspect, LPCREC
          return S_OK;
      }
  
@@ -709,7 +1244,7 @@ index 7eb4acb..58a62c9 100644
      for (LONG i = 0; i < m_maskRectCount; ++i)
      {
          RECT maskRect = m_maskRects[m_maskRectCount];
-@@ -996,6 +1659,56 @@ HRESULT FlashProxyModule::OnWebMessageReceived(ICoreWebView2 *sender, ICoreWebVi
+@@ -996,6 +2189,99 @@ HRESULT FlashProxyModule::OnWebMessageReceived(ICoreWebView2 *sender, ICoreWebVi
      if (_wcsicmp(bcommand, L"getKeyboardFocus") == 0)
          return E_NOTIMPL;
  
@@ -720,6 +1255,18 @@ index 7eb4acb..58a62c9 100644
 +            g_tmuiSubscribers.Add(this);
 +        if (g_tmuiTimer == 0 || g_tmuiTimerWnd == nullptr)
 +            TmuiStartTimer();
++        // the dock owns /commands: reader pages get the feed without them
++        TmuiPostVariable(L"tmui_cmdowner", L"1");
++        // the picture store is here: the dock can use /tmui-img/
++        if (TmuiImgDirReady())
++            TmuiPostVariable(L"tmui_imgcache", L"1");
++        return S_OK;
++    }
++
++    // ThereModernUI: the dock's photo list, fetch what isn't on disk yet
++    if (_wcsicmp(bcommand, L"tmuiPrefetch") == 0)
++    {
++        TmuiImgPrefetch(bquery);
 +        return S_OK;
 +    }
 +
@@ -739,6 +1286,37 @@ index 7eb4acb..58a62c9 100644
 +    if (_wcsicmp(bcommand, L"tmuiPeek") == 0)
 +    {
 +        KmPeek(_wcsicmp(bquery, L"on=1") == 0);
++        return S_OK;
++    }
++
++    // ThereModernUI: tap an arrow key once, for the DNA tab's camera controls
++    // (ChangeMe's spa camera is driven by the arrow keys). Only when a There
++    // window is in front, so we never type arrows into other apps.
++    if (_wcsicmp(bcommand, L"tmuiKey") == 0)
++    {
++        WORD vk = 0;
++        if (_wcsicmp(bquery, L"key=left") == 0)
++            vk = VK_LEFT;
++        else if (_wcsicmp(bquery, L"key=right") == 0)
++            vk = VK_RIGHT;
++        else if (_wcsicmp(bquery, L"key=up") == 0)
++            vk = VK_UP;
++        else if (_wcsicmp(bquery, L"key=down") == 0)
++            vk = VK_DOWN;
++        // The game reads keys through the focused window, so clicking a dock
++        // button (which takes focus) made SendInput land the arrow on the dock.
++        // Pull the game's top-level window to the foreground first, then inject
++        // with SendInput (the game's own input path), so it registers reliably.
++        if (vk != 0 && m_clientWnd != nullptr)
++        {
++            HWND top = GetAncestor(m_clientWnd, GA_ROOT);
++            if (top == nullptr)
++                top = m_clientWnd;
++            if (GetForegroundWindow() != top)
++                SetForegroundWindow(top);
++            KmSendKey(vk, false);
++            KmSendKey(vk, true);
++        }
 +        return S_OK;
 +    }
 +
@@ -766,7 +1344,7 @@ index 7eb4acb..58a62c9 100644
      VARIANTARG vargs[2];
      vargs[0].vt = VT_BSTR;
      vargs[0].bstrVal = bquery;
-@@ -1066,7 +1779,19 @@ HRESULT FlashProxyModule::OnWebResourceRequested(ICoreWebView2 *sender, ICoreWeb
+@@ -1066,7 +2352,32 @@ HRESULT FlashProxyModule::OnWebResourceRequested(ICoreWebView2 *sender, ICoreWeb
          return S_OK;
      }
  
@@ -783,11 +1361,24 @@ index 7eb4acb..58a62c9 100644
 +            return TmuiWebFetch(args, hit + wcslen(prefix));
 +    }
 +
++    // ThereModernUI: static files take the file lane (worker thread reading
++    // the disk), so a stalling URLMon bind can no longer freeze the client.
++    // Everything else keeps the stock bind below: it carries the window
++    // identity the client checks on command endpoints.
++    {
++        const WCHAR *prefix = L"/tmui-img/";
++        if (_wcsnicmp(path, prefix, wcslen(prefix)) == 0)
++            return TmuiImgFetch(args, path + wcslen(prefix));
++    }
++
++    if (TmuiFileFetch(args, path) == S_OK)
++        return S_OK;
++
 +    CComPtr<FlashRequestProxy> flashRequestProxy(new FlashRequestProxy(m_environment, args, this));
      if (flashRequestProxy == nullptr)
          return E_FAIL;
  
-@@ -1217,6 +1942,15 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
+@@ -1217,6 +2528,15 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
      if (m_proxyWnd == nullptr)
          return S_OK;
  
@@ -803,7 +1394,7 @@ index 7eb4acb..58a62c9 100644
      SetWindowPos(m_proxyWnd, nullptr, m_pos.cx, m_pos.cy, max(1, m_size.cx), max(1, m_size.cy), flags | SWP_NOZORDER | SWP_NOACTIVATE);
      SetVisibility(m_visibilityMask);
      GuessToolbarVisibility();
-@@ -1237,6 +1971,130 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
+@@ -1237,6 +2557,130 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
      return S_OK;
  }
  
@@ -934,11 +1525,27 @@ index 7eb4acb..58a62c9 100644
  HRESULT FlashProxyModule::SetMaskRects(WCHAR *text)
  {
      for (m_maskRectCount = 0; m_maskRectCount < _countof(m_maskRects) && text[0] != 0; ++m_maskRectCount)
+@@ -1479,6 +2923,15 @@ LRESULT APIENTRY FlashProxyModule::ChildWndProc(HWND hWnd, UINT Msg, WPARAM wPar
+             return 0;
+         }
+ 
++        // ThereModernUI: a worker finished a web/file lane job. Delivery must
++        // not wait for the Tmui timer: that only starts once a page loads, and
++        // the page itself loads through this lane
++        case WM_TMUI_WEB_DELIVER:
++        {
++            TmuiWebDeliver();
++            return 0;
++        }
++
+         case WM_FLASHPROXY_REQUEST_VISIBILITY:
+         {
+             if (flashProxy != nullptr)
 diff --git a/FlashProxy/FlashProxy.h b/FlashProxy/FlashProxy.h
-index b3a3f78..253b819 100644
+index b3a3f78..379d55b 100644
 --- a/FlashProxy/FlashProxy.h
 +++ b/FlashProxy/FlashProxy.h
-@@ -227,6 +227,23 @@ protected:
+@@ -227,6 +227,26 @@ protected:
  public:
      static LRESULT APIENTRY ChildWndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
  
@@ -953,6 +1560,9 @@ index b3a3f78..253b819 100644
 +    void TmuiApplyShape(const WCHAR *query);
 +    void TmuiPlaceWindow();
 +    HRESULT TmuiWebFetch(ICoreWebView2WebResourceRequestedEventArgs *args, const WCHAR *rest);
++    HRESULT TmuiFileFetch(ICoreWebView2WebResourceRequestedEventArgs *args, const WCHAR *path);
++    HRESULT TmuiImgFetch(ICoreWebView2WebResourceRequestedEventArgs *args, const WCHAR *name);
++    void TmuiImgPrefetch(const WCHAR *query);
 +    static void TmuiWebDeliver();
 +    static void TmuiRelayDeliver();
 +    static LRESULT CALLBACK TmuiKeymapProc(int code, WPARAM wParam, LPARAM lParam);
@@ -962,7 +1572,7 @@ index b3a3f78..253b819 100644
  protected:
      ULONG                                    m_refCount;
      QACONTAINER                              m_qaContainer;
-@@ -237,6 +254,11 @@ protected:
+@@ -237,6 +257,11 @@ protected:
      HWND                                     m_clientWnd;
      RECT                                     m_maskRects[10];
      LONG                                     m_maskRectCount;
@@ -975,7 +1585,7 @@ index b3a3f78..253b819 100644
      Identity                                 m_identity;
      UINT32                                   m_visibilityMask;
 diff --git a/FlashProxy/FlashRequestProxy.cpp b/FlashProxy/FlashRequestProxy.cpp
-index 38963bc..76d4961 100644
+index 38963bc..706224c 100644
 --- a/FlashProxy/FlashRequestProxy.cpp
 +++ b/FlashProxy/FlashRequestProxy.cpp
 @@ -18,7 +18,7 @@
@@ -987,7 +1597,7 @@ index 38963bc..76d4961 100644
      m_refCount(1),
      m_environment(environment),
      m_args(args),
-@@ -28,12 +28,18 @@ FlashRequestProxy::FlashRequestProxy(ICoreWebView2Environment *environment, ICor
+@@ -28,12 +28,20 @@ FlashRequestProxy::FlashRequestProxy(ICoreWebView2Environment *environment, ICor
      m_mimeType(),
      m_contentType(),
      m_size(0),
@@ -997,7 +1607,9 @@ index 38963bc..76d4961 100644
 +    m_tee(false),
 +    m_teeBacklog(false),
 +    m_teeSent(false),
-+    m_teeBuf()
++    m_teeBuf(),
++    m_filtered(false),
++    m_filteredBuf()
  {
  }
  
@@ -1007,7 +1619,7 @@ index 38963bc..76d4961 100644
      if (m_deferral != nullptr)
          m_deferral->Complete();
  }
-@@ -45,6 +51,15 @@ HRESULT FlashRequestProxy::Init(IServiceProvider *serviceProvider, WCHAR *uri)
+@@ -45,6 +53,15 @@ HRESULT FlashRequestProxy::Init(IServiceProvider *serviceProvider, WCHAR *uri)
  
      DetermineContentType(uri);
  
@@ -1023,7 +1635,55 @@ index 38963bc..76d4961 100644
      CComPtr<IBindHost> bindHost;
      if (FAILED(serviceProvider->QueryService(IID_IBindHost, &bindHost)))
          return E_FAIL;
-@@ -241,6 +256,13 @@ HRESULT STDMETHODCALLTYPE FlashRequestProxy::Read(void *pv, ULONG cb, ULONG *pcb
+@@ -208,6 +225,30 @@ HRESULT STDMETHODCALLTYPE FlashRequestProxy::OnDataAvailable(DWORD grfBSCF, DWOR
+         m_size = dwSize;
+     }
+ 
++    // ThereModernUI: a chat feed answer for another page (the Command Bar).
++    // the whole answer is here: the dock gets it as is, the page gets it with
++    // the /command lines taken out, so only the dock runs them
++    if (m_tee && !m_teeSent)
++    {
++        CStringA whole;
++        char *buffer = whole.GetBuffer(static_cast<int>(m_size));
++        ULONG total = 0;
++        while (total < m_size)
++        {
++            ULONG got = 0;
++            if (FAILED(m_stream->Read(buffer + total, m_size - total, &got)) || got == 0)
++                break;
++            total += got;
++        }
++        whole.ReleaseBufferSetLength(static_cast<int>(total));
++        m_teeBuf = whole;
++        TeeFlush();
++        m_filteredBuf = TmuiStripCommands(whole);
++        m_filtered = true;
++        m_size = static_cast<ULONG>(m_filteredBuf.GetLength());
++        m_position = 0;
++    }
++
+     CComPtr<ICoreWebView2WebResourceResponse> response;
+     if (FAILED(m_environment->CreateWebResourceResponse(this, 200, L"OK", nullptr, &response)) || response == nullptr)
+         return E_FAIL;
+@@ -233,6 +274,16 @@ HRESULT STDMETHODCALLTYPE FlashRequestProxy::Read(void *pv, ULONG cb, ULONG *pcb
+     if (pv == nullptr || pcbRead == nullptr || m_stream == nullptr)
+         return E_INVALIDARG;
+ 
++    if (m_filtered)
++    {
++        ULONG left = static_cast<ULONG>(m_filteredBuf.GetLength()) - m_position;
++        ULONG n = cb < left ? cb : left;
++        memcpy(pv, m_filteredBuf.GetString() + m_position, n);
++        m_position += n;
++        *pcbRead = n;
++        return n < cb ? S_FALSE : S_OK;
++    }
++
+     HRESULT hr = m_stream->Read(pv, cb, pcbRead);
+     if (SUCCEEDED(hr))
+     {
+@@ -241,6 +292,13 @@ HRESULT STDMETHODCALLTYPE FlashRequestProxy::Read(void *pv, ULONG cb, ULONG *pcb
  
          m_size -= *pcbRead;
          m_position += *pcbRead;
@@ -1037,12 +1697,60 @@ index 38963bc..76d4961 100644
      }
  
      return hr;
-@@ -311,4 +333,14 @@ HRESULT FlashRequestProxy::DetermineContentType(const WCHAR *uri)
+@@ -311,4 +369,62 @@ HRESULT FlashRequestProxy::DetermineContentType(const WCHAR *uri)
  
      //Log(L"Content type unknown for .%s\n", ext);
      return E_FAIL;
 -}
 \ No newline at end of file
++}
++
++// ThereModernUI: the chat feed answer minus every <msg> whose text starts
++// with "/". the reader page never sees a /command, so it can't run it too
++CStringA FlashRequestProxy::TmuiStripCommands(const CStringA &xml)
++{
++    CStringA out;
++    int pos = 0;
++    const int len = xml.GetLength();
++    for (;;)
++    {
++        int start = xml.Find("<msg", pos);
++        if (start < 0 || start + 4 >= len)
++        {
++            out += xml.Mid(pos);
++            break;
++        }
++        char next = xml[start + 4];
++        if (next != '>' && next != ' ')
++        {
++            out += xml.Mid(pos, start + 4 - pos);
++            pos = start + 4;
++            continue;
++        }
++        int end = xml.Find("</msg>", start);
++        if (end < 0)
++        {
++            out += xml.Mid(pos);
++            break;
++        }
++        end += 6;
++        bool command = false;
++        int text = xml.Find("<text>", start);
++        if (text >= 0 && text < end)
++        {
++            int k = text + 6;
++            if (xml.Mid(k, 9) == "<![CDATA[")
++                k += 9;
++            while (k < end && (xml[k] == ' ' || xml[k] == '\t' || xml[k] == '\r' || xml[k] == '\n'))
++                ++k;
++            command = k < end && xml[k] == '/';
++        }
++        out += xml.Mid(pos, start - pos);
++        if (!command)
++            out += xml.Mid(start, end - start);
++        pos = end;
++    }
++    return out;
 +}
 +
 +// ThereModernUI: hand the copied chat feed answer over (once). Read can run off
@@ -1055,10 +1763,10 @@ index 38963bc..76d4961 100644
 +    TmuiRelayQueue(m_teeBuf.GetString(), m_teeBuf.GetLength(), m_teeBacklog);
 +}
 diff --git a/FlashProxy/FlashRequestProxy.h b/FlashProxy/FlashRequestProxy.h
-index 8d07804..66bb1a1 100644
+index 8d07804..fa71136 100644
 --- a/FlashProxy/FlashRequestProxy.h
 +++ b/FlashProxy/FlashRequestProxy.h
-@@ -4,12 +4,17 @@ using namespace ATL;
+@@ -4,12 +4,18 @@ using namespace ATL;
  
  void Log(const WCHAR *format, ...);
  
@@ -1066,6 +1774,7 @@ index 8d07804..66bb1a1 100644
 +bool TmuiRelayWanted(void *owner);
 +void TmuiRelayQueue(const char *data, int len, bool backlog);
 +void TmuiRelayReaderSeen();
++void TmuiRelayReaderGone(void *owner);
 +
  class FlashRequestProxy: public IBindCtx,
                           public IBindStatusCallback,
@@ -1077,7 +1786,15 @@ index 8d07804..66bb1a1 100644
      virtual ~FlashRequestProxy();
  
      HRESULT Init(IServiceProvider *serviceProvider, WCHAR *uri);
-@@ -62,4 +67,11 @@ protected:
+@@ -50,6 +56,7 @@ protected:
+     virtual HRESULT STDMETHODCALLTYPE Clone(IStream **ppstm) override {return E_NOTIMPL;}
+ 
+     HRESULT DetermineContentType(const WCHAR *uri);
++    static CStringA TmuiStripCommands(const CStringA &xml);
+ 
+ protected:
+     ULONG                                                m_refCount;
+@@ -62,4 +69,14 @@ protected:
      CComBSTR                                             m_contentType;
      ULONG                                                m_size;
      ULONG                                                m_position;
@@ -1087,6 +1804,9 @@ index 8d07804..66bb1a1 100644
 +    bool                                                 m_teeBacklog;
 +    bool                                                 m_teeSent;
 +    CStringA                                             m_teeBuf;
++    // the answer with /command lines taken out: the dock runs those
++    bool                                                 m_filtered;
++    CStringA                                             m_filteredBuf;
 +    void TeeFlush();
  };
 \ No newline at end of file

@@ -19,3 +19,21 @@ Notification sound
 GIFs
   GIF search and media are provided by KLIPY (https://klipy.com) under the
   KLIPY API terms. "Powered by KLIPY" is shown in the GIFs panel.
+
+Music
+  Music search and audio streams come from Piped
+  (https://github.com/TeamPiped/Piped), an open source YouTube front end,
+  through public Piped instances. Tracks are YouTube content; when a stream
+  can't be resolved, the YouTube IFrame Player is used instead. Nothing from
+  Piped is bundled.
+
+Maps (Places map and GPS screen)
+  Region boundaries and map calibration come from Myrmex GPS (2007). The
+  island map images in compass/maps are There.com map art, taken from
+  Myrmex GPS.
+
+Slash commands
+  The commands typed in chat are defined by TheChaz's Command Bar
+  (shortcutbar2.json). ThereModernUI reads that file from the player's own
+  There install at runtime; none of the Command Bar's files are shipped or
+  changed.

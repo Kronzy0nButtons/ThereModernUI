@@ -64,6 +64,10 @@ const CatalogImages = {
 
   ready: function() {
     CatalogImages.loaded = true;
+    // the picture store may have been waiting on this table
+    if (typeof There.prefetchPhotos == 'function') {
+      There.prefetchPhotos();
+    }
     const waiting = CatalogImages.waiting;
     CatalogImages.waiting = [];
     for (let w of waiting) {
@@ -75,8 +79,45 @@ const CatalogImages = {
     }
   },
 
+  // the FlashProxy picture store (tmui_imgcache): photos come off disk,
+  // downloaded once ever. off until the DLL says it's there
+  localLane: false,
+
   mediaUrl: function(filename) {
+    if (CatalogImages.localLane && /^[A-Za-z0-9._-]+$/.test(filename)) {
+      const host = There.data.host || There.variables.there_resourceshost || '127.0.0.1:9999';
+      return `http://${host}/tmui-img/${filename}`;
+    }
+    return CatalogImages.directUrl(filename);
+  },
+
+  directUrl: function(filename) {
     return `https://${CatalogImages.webappsHost}/catalog/media/${filename}`;
+  },
+
+  // a store url that failed -> the same photo straight from There
+  fallbackUrl: function(url) {
+    const m = String(url || '').match(/\/tmui-img\/([A-Za-z0-9._-]+)$/);
+    return m ? CatalogImages.directUrl(m[1]) : null;
+  },
+
+  // every photo filename these items would show, for the store to fetch ahead
+  filesFor: function(items) {
+    const files = [];
+    for (const it of items || []) {
+      let file = null;
+      if (it.productId) {
+        const e = CatalogImages.map[String(it.productId)];
+        file = e ? (e.medium || e.small || e.large) : null;
+      }
+      if (!file && it.poid) {
+        file = CatalogImages.poids[String(it.poid)] || null;
+      }
+      if (file) {
+        files.push(file);
+      }
+    }
+    return files;
   },
 
   pickSize: function(entry, size) {
