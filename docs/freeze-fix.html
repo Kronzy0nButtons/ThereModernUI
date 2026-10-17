@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Taming the 8 second freeze - ThereModernUI</title>
-<meta name="description" content="Under the hood: why the There.com client freezes for 8 seconds on Windows 11, and how ThereModernUI makes it noticeably smoother.">
+<meta name="description" content="Under the hood: why the There.com client freezes for 8 seconds on Windows 11, and how ThereModernUI's file lane, local file serving and request queue make it noticeably smoother.">
 <meta property="og:title" content="Taming the 8 second freeze">
 <meta property="og:description" content="Why the There.com client rubberbands on Windows 11, and how ThereModernUI makes it noticeably smoother.">
 <meta property="og:image" content="assets/tmui-square.png">
@@ -74,6 +74,7 @@ nav .links a:hover { color: var(--text); text-decoration: none; }
 .article h1 { font-size: clamp(26px, 4vw, 38px); line-height: 1.2; margin: 8px 0 8px; letter-spacing: -0.5px; }
 .article .byline { color: var(--dim); font-size: 13px; margin-bottom: 34px; }
 .article h2 { font-size: 22px; margin: 42px 0 10px; letter-spacing: -0.3px; }
+.article h3 { font-size: 16px; margin: 26px 0 8px; color: var(--accent, #38bdf8); }
 .article p { color: var(--text); margin: 0 0 16px; }
 .article p.dim { color: var(--dim); }
 .article ul { margin: 0 0 16px; padding-left: 22px; }
@@ -154,7 +155,7 @@ footer img { height: 18px; opacity: 0.8; }
 
   <p>Their advice while waiting on Microsoft was to keep the MessageBar, ChangeMe, Compass and FunFinder closed, with the warning that every teleport and MessageBar update opens one of those windows anyway. In other words: the only known workaround was to not use the UI.</p>
 
-  <p>ThereModernUI 1.0.6 makes this noticeably better. Not by waiting for Microsoft, but by changing how those windows load their files in the first place. Here is the full story, including what it can and can't do.</p>
+  <p>ThereModernUI 1.0.6 made this noticeably better, and 1.0.7 goes further. Not by waiting for Microsoft, but by changing how those windows load their files, and how often they ask the game for anything at all. Here is the full story, including what it can and can't do.</p>
 
   <h2>How the UI windows actually work</h2>
 
@@ -190,6 +191,37 @@ footer img { height: 18px; opacity: 0.8; }
 
   <p>And because everything the devs listed, Compass, MessageBar, ChangeMe, FunFinder, plus the teleport slideshow, runs inside the one component we rebuild, the fix covers all of them. Including the stock windows ModernUI does not reskin.</p>
 
+  <h2>Going further in 1.0.7</h2>
+
+  <p>The file lane took the biggest freeze away, but it still started on the game's thread: every file request arrived there first and was handed off from there. And files were only one kind of request. 1.0.7 goes after the rest.</p>
+
+  <h3>The dock's own files skip the game entirely</h3>
+
+  <p>WebView2 can serve a folder on disk by itself, under a private web address, without asking its host about each file. ModernUI's FlashProxy now maps two folders this way: the client's own folder (pages, scripts, map pictures, icons) and the picture store. The dock loads everything it can from those addresses, so its files never raise a request on the game's thread at all, not even for a moment. The file lane is still there for the stock windows, which ask for their files the old way.</p>
+
+  <h3>Photos are downloaded once, ever</h3>
+
+  <p>Clothing and item photos used to be fetched again whenever the browser cache forgot them. They are now kept in a picture store on your PC, filled in the background after you log in. Public pages from There's website (the shop, auctions, events) come through WinHTTP, a separate Windows network stack the game does not use, so a burst of them cannot hold up the game's own connections. Pages that need your login still go the game's way, because your session only lives there.</p>
+
+  <h3>A queue for requests to the game</h3>
+
+  <p>There is one more kind of request, and the file lane cannot help with it. When the dock needs something only the game knows (an item's actions, a menu, your inventory, who is nearby) it has to ask the client, and the client answers on its main thread. One question is quick. Fifty at once, which is what opening a full Inventory or Wardrobe used to fire, add up to a stall you can feel.</p>
+
+  <p>So in 1.0.7 every question to the game goes through a queue. Only a few run at once, with a short gap between them, and the rest wait their turn. A request that hangs is dropped after 15 seconds instead of blocking the line. Live readings that have to stay smooth (your position for the map and speedometer, the people around you) skip the queue, and so do the dock's own files.</p>
+
+  <p>When a lot is waiting, a slim bar above the dock says <b>Waiting for the There client to catch up</b>, so a panel that fills in gradually is explained rather than looking stuck.</p>
+
+  <h3>You choose the pace</h3>
+
+  <p>How many questions run at once is up to you, in <b>Settings &gt; Sync &amp; data &gt; Requests to the game</b>, from 1 to 4. The default is 2.</p>
+
+  <ul>
+    <li><b>Fewer at once</b> is smoother: the game is never asked more than it can answer between frames, but big panels take longer to fill.</li>
+    <li><b>More at once</b> loads faster, at the cost of the odd hitch while a big panel loads. On a fast PC that may not be noticeable at all.</li>
+  </ul>
+
+  <p>Every PC and every install is different, so try a setting, open your Inventory and Wardrobe, and keep the one that feels best.</p>
+
   <h2>The evidence</h2>
 
   <p>None of this is guesswork. There Edge is open source, so the whole chain can be read, and the built files can be checked.</p>
@@ -215,15 +247,17 @@ moniker->BindToStorage(this, nullptr, IID_IStream, (void**)&amp;m_stream);</code
 
   <h2>What deliberately did not change</h2>
 
-  <p>Game data and commands, chat, presence, inventory, everything the windows say to the client, still travel their original route. That route carries information about which window is asking, and the client checks it, so we leave it alone. The file lane touches files and nothing else.</p>
+  <p>Game data and commands, chat, presence, inventory, everything the windows say to the client, still travel their original route. That route carries information about which window is asking, and the client checks it, so we leave it alone. The file lane touches files and nothing else, and the queue only changes when the dock's questions are sent, not how.</p>
 
   <p>It is also built to fail safe. If a requested file is not on disk where expected, the request quietly falls back to the original path and behaves exactly like the stock client. And if you ever want the stock behaviour back entirely, set the environment variable <code>TMUI_FILELANE=0</code> and restart There.</p>
 
   <h2>What to expect</h2>
 
-  <p>Play is noticeably smoother: teleports, messages and the dock's panels no longer hold the world up while their files load. You will still catch the odd stutter here and there. That's expected. There's client is from a different era of PC software, with a modern WebView2 now sitting on top of it, and plenty of its own work still runs on that one main thread. The file lane takes away the biggest, most regular cause of freezing, not every pause the client can have.</p>
+  <p>Play is noticeably smoother: teleports, messages and the dock's panels no longer hold the world up while their files load, and big panels fill in at a pace the game can keep up with. You will still catch the odd stutter here and there. That's expected. There's client is from a different era of PC software, with a modern WebView2 now sitting on top of it, and plenty of its own work still runs on that one main thread. ModernUI takes away the biggest, most regular causes of freezing, not every pause the client can have. If panels feel slow or the game feels jumpy, the <b>Requests to the game</b> setting is the dial to turn.</p>
 
   <div class="note"><b>To be fair to Microsoft and to There:</b> the underlying Windows bug is real and still exists, and it is not There's code that broke. What ModernUI changes is where the slow work happens, so it can no longer hold up the game. If Microsoft ships a fix, nothing here gets in its way.</div>
+
+  <p>And this isn't the end of it. As we keep working to modernize the There client with what's available to us, we'll always look for ways to improve the experience where we can.</p>
 
   <h2>Try it</h2>
 

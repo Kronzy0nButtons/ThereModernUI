@@ -895,6 +895,18 @@ There.init({
           There.openMoveDialog(entry);
           return;
         }
+        if (menu.action == 'profile') {
+          // the dock shows profiles in a panel, no browser window
+          try {
+            localStorage.setItem('tmui-profile-cmd', JSON.stringify({
+              doid: entry.id,
+              name: entry.name || '',
+              ts: Date.now(),
+            }));
+            return;
+          } catch (error) {
+          }
+        }
         let query = {
           av: entry.id,
           action: menu.action,

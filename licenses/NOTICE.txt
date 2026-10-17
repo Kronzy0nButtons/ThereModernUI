@@ -28,9 +28,8 @@ Music
   Piped is bundled.
 
 Maps (Places map and GPS screen)
-  Region boundaries and map calibration come from Myrmex GPS (2007). The
-  island map images in compass/maps are There.com map art, taken from
-  Myrmex GPS.
+  Map calibration comes from Myrmex GPS (2007). The island maps in
+  compass/maps are ThereModernUI's own vector maps.
 
 Slash commands
   The commands typed in chat are defined by TheChaz's Command Bar

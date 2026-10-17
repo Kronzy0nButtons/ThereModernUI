@@ -4,7 +4,8 @@
 #
 #   powershell -ExecutionPolicy Bypass -File release.ps1             full release
 #   powershell -ExecutionPolicy Bypass -File release.ps1 -DryRun     build and show, publish nothing
-#   add -Notes "what changed" for the release notes
+#   add -Notes "what changed" for the release notes, or -NotesFile <path.md>
+#   (a notes file that has its own "**Install / update:**" line keeps it)
 #
 # Bump the version in Resources\tmui\update.js first, it won't re-release an
 # existing tag or anything older than what's already out.
@@ -14,7 +15,8 @@
 
 param(
   [switch]$DryRun,
-  [string]$Notes = ''
+  [string]$Notes = '',
+  [string]$NotesFile = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -116,9 +118,12 @@ try {
 
   # ---------- 5. GitHub Release ----------
   $body = @()
+  if ($NotesFile) { $Notes = ([IO.File]::ReadAllText((Resolve-Path $NotesFile))).TrimEnd() }
   if ($Notes) { $body += $Notes; $body += '' }
-  $body += '**Install / update:** close There completely, run the setup, pick your There folder (the one with `There.exe`), then start There again. Running it over an existing install is the update.'
-  $body += ''
+  if ($Notes -notmatch '\*\*Install / update:\*\*') {
+    $body += '**Install / update:** close There completely, run the setup, pick your There folder (the one with `There.exe`), then start There again. Running it over an existing install is the update.'
+    $body += ''
+  }
   $body += "SHA-256 of ``$(Split-Path $setup -Leaf)``:"
   $body += '```'
   $body += $sha

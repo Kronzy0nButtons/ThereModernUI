@@ -1,8 +1,16 @@
 diff --git a/FlashProxy/FlashProxy.cpp b/FlashProxy/FlashProxy.cpp
-index 7eb4acb..28f6513 100644
+index 7eb4acb..41b8db6 100644
 --- a/FlashProxy/FlashProxy.cpp
 +++ b/FlashProxy/FlashProxy.cpp
-@@ -19,6 +19,7 @@
+@@ -10,6 +10,7 @@
+ #include "resource.h"
+ #include "shlwapi.h"
+ #include "shlobj.h"
++#include "shellapi.h"
+ #include "wininet.h"
+ #include "atlbase.h"
+ #include "atlcom.h"
+@@ -19,6 +20,7 @@
  #include "ocmm.h"
  #include "wrl.h"
  #include "WebView2.h"
@@ -10,12 +18,14 @@ index 7eb4acb..28f6513 100644
  #include "versionhelpers.h"
  #include "FlashRequestProxy.h"
  #include "FlashProxy_i.h"
-@@ -29,11 +30,1165 @@
+@@ -29,11 +31,1832 @@
  #define WM_FLASHPROXY_SET_TELEPORTING    (WM_USER + 3)
  #define WM_FLASHPROXY_GET_IDENTITY       (WM_USER + 4)
  #define WM_FLASHPROXY_GET_ABOUT          (WM_USER + 5)
 +// ThereModernUI: a web/file lane job finished, deliver it (posted by workers)
 +#define WM_TMUI_WEB_DELIVER              (WM_USER + 6)
++// ThereModernUI: the self-update worker has news (posted by the worker)
++#define WM_TMUI_UPDATE                   (WM_USER + 7)
  
  FlashProxyModule g_AtlModule;
  HINSTANCE g_Instance;
@@ -111,6 +121,10 @@ index 7eb4acb..28f6513 100644
 +    CStringA data;
 +    CStringW file;     // file lane: the disk file to answer with (webapps lane: empty)
 +    CStringW ctype;    // content type of the answer
++    // a form post (webapps lane): the page's own body and its content type
++    bool post;
++    CStringA postBody;
++    CStringW postType;
 +    HWND wnd;          // proxy window of the asking module: delivery is posted
 +                       // here, so it works before any page starts the timer
 +    volatile LONG done;
@@ -118,11 +132,167 @@ index 7eb4acb..28f6513 100644
 +};
 +
 +static CComAutoCriticalSection g_tmuiWebLock;
++
++// ThereModernUI: downloads that need no login go through WinHTTP, not
++// WinInet. The game itself talks to There's servers with WinInet, whose
++// connection limits and locks are shared by the whole process: a burst of
++// our downloads (the picture store filling up after login) could leave the
++// game's own requests waiting on its main thread, freezing it. WinHTTP is a
++// separate stack the game doesn't use. Login pages keep WinInet, since the
++// game's session only lives there.
++typedef LPVOID (WINAPI *TmuiWhOpen)(LPCWSTR, DWORD, LPCWSTR, LPCWSTR, DWORD);
++typedef LPVOID (WINAPI *TmuiWhConnect)(LPVOID, LPCWSTR, WORD, DWORD);
++typedef LPVOID (WINAPI *TmuiWhOpenRequest)(LPVOID, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR *, DWORD);
++typedef BOOL (WINAPI *TmuiWhSend)(LPVOID, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR);
++typedef BOOL (WINAPI *TmuiWhReceive)(LPVOID, LPVOID);
++typedef BOOL (WINAPI *TmuiWhQuery)(LPVOID, DWORD, LPCWSTR, LPVOID, LPDWORD, LPDWORD);
++typedef BOOL (WINAPI *TmuiWhRead)(LPVOID, LPVOID, DWORD, LPDWORD);
++typedef BOOL (WINAPI *TmuiWhClose)(LPVOID);
++typedef BOOL (WINAPI *TmuiWhTimeouts)(LPVOID, int, int, int, int);
++
++static struct
++{
++    volatile LONG state;   // 0 not tried, 1 loaded, 2 unavailable
++    TmuiWhOpen open;
++    TmuiWhConnect connect;
++    TmuiWhOpenRequest openRequest;
++    TmuiWhSend send;
++    TmuiWhReceive receive;
++    TmuiWhQuery query;
++    TmuiWhRead read;
++    TmuiWhClose close;
++    TmuiWhTimeouts timeouts;
++} g_tmuiWh = {0};
++
++static bool TmuiWhLoad()
++{
++    if (g_tmuiWh.state != 0)
++        return g_tmuiWh.state == 1;
++    HMODULE dll = LoadLibraryW(L"winhttp.dll");
++    if (dll != nullptr)
++    {
++        g_tmuiWh.open = (TmuiWhOpen)GetProcAddress(dll, "WinHttpOpen");
++        g_tmuiWh.connect = (TmuiWhConnect)GetProcAddress(dll, "WinHttpConnect");
++        g_tmuiWh.openRequest = (TmuiWhOpenRequest)GetProcAddress(dll, "WinHttpOpenRequest");
++        g_tmuiWh.send = (TmuiWhSend)GetProcAddress(dll, "WinHttpSendRequest");
++        g_tmuiWh.receive = (TmuiWhReceive)GetProcAddress(dll, "WinHttpReceiveResponse");
++        g_tmuiWh.query = (TmuiWhQuery)GetProcAddress(dll, "WinHttpQueryHeaders");
++        g_tmuiWh.read = (TmuiWhRead)GetProcAddress(dll, "WinHttpReadData");
++        g_tmuiWh.close = (TmuiWhClose)GetProcAddress(dll, "WinHttpCloseHandle");
++        g_tmuiWh.timeouts = (TmuiWhTimeouts)GetProcAddress(dll, "WinHttpSetTimeouts");
++    }
++    const bool ok = dll != nullptr && g_tmuiWh.open && g_tmuiWh.connect && g_tmuiWh.openRequest &&
++        g_tmuiWh.send && g_tmuiWh.receive && g_tmuiWh.query && g_tmuiWh.read && g_tmuiWh.close;
++    InterlockedExchange(&g_tmuiWh.state, ok ? 1 : 2);
++    return ok;
++}
++
++static void TmuiAppendBytes(CStringA &out, const char *data, int n);
++
++// a GET from webapps.prod.there.com over WinHTTP, no cookies. true with a 200
++// and a body; expect is the Content-Length when the server gave one
++static bool TmuiHttpGet(LPCWSTR path, CStringA &out, CStringW &type, DWORD &expect)
++{
++    expect = 0;
++    if (!TmuiWhLoad())
++        return false;
++    bool ok = false;
++    // 0 = WINHTTP_ACCESS_TYPE_DEFAULT_PROXY
++    LPVOID session = g_tmuiWh.open(L"ThereModernUI", 0, nullptr, nullptr, 0);
++    if (session == nullptr)
++        return false;
++    if (g_tmuiWh.timeouts != nullptr)
++        g_tmuiWh.timeouts(session, 10000, 10000, 15000, 30000);
++    LPVOID connection = g_tmuiWh.connect(session, L"webapps.prod.there.com", 443, 0);
++    if (connection != nullptr)
++    {
++        // 0x00800000 = WINHTTP_FLAG_SECURE
++        LPVOID request = g_tmuiWh.openRequest(connection, L"GET", path, nullptr, nullptr, nullptr, 0x00800000);
++        if (request != nullptr)
++        {
++            if (g_tmuiWh.send(request, nullptr, 0, nullptr, 0, 0, 0) && g_tmuiWh.receive(request, nullptr))
++            {
++                // 19 = STATUS_CODE, 5 = CONTENT_LENGTH, 1 = CONTENT_TYPE, 0x20000000 = FLAG_NUMBER
++                DWORD status = 0;
++                DWORD len = sizeof(status);
++                g_tmuiWh.query(request, 19 | 0x20000000, nullptr, &status, &len, nullptr);
++                len = sizeof(expect);
++                if (!g_tmuiWh.query(request, 5 | 0x20000000, nullptr, &expect, &len, nullptr))
++                    expect = 0;
++                WCHAR ct[128] = {0};
++                len = sizeof(ct);
++                if (g_tmuiWh.query(request, 1, nullptr, ct, &len, nullptr) && ct[0] != 0)
++                    type = ct;
++                if (status == 200)
++                {
++                    char buffer[16384];
++                    DWORD got = 0;
++                    while (g_tmuiWh.read(request, buffer, sizeof(buffer), &got) && got > 0)
++                    {
++                        TmuiAppendBytes(out, buffer, static_cast<int>(got));
++                        if (out.GetLength() > 8 * 1024 * 1024)
++                            break;
++                    }
++                    ok = out.GetLength() > 0;
++                }
++            }
++            g_tmuiWh.close(request);
++        }
++        g_tmuiWh.close(connection);
++    }
++    g_tmuiWh.close(session);
++    return ok;
++}
++
++// CStringA::Append(p, n) measures the source with StringLengthN and stops at
++// the first zero byte: fine for text, ruinous for images. this copies all n
++static void TmuiAppendBytes(CStringA &out, const char *data, int n)
++{
++    if (n <= 0)
++        return;
++    const int old = out.GetLength();
++    char *buffer = out.GetBufferSetLength(old + n);
++    memcpy(buffer + old, data, n);
++    out.ReleaseBufferSetLength(old + n);
++}
 +static ATL::CSimpleArray<TmuiWebJob*> g_tmuiWebJobs;
++
++static bool TmuiNeedsLogin(const CStringW &path)
++{
++    return path.Find(L"/wsgi-scripts/review.py/") == 0 ||
++           path.Find(L"/wsgi-scripts/submissions.py/") == 0 ||
++           path.Find(L"/developer/asset.cgi?type=catimage&subid=") == 0 ||
++           path.Find(L"/items/addquantity") == 0 ||
++           path.Find(L"/items/myitems") == 0 ||
++           path.Find(L"/eventmgmt/myevents") == 0 ||
++           path.Find(L"/eventmgmt/eventmgmt?op=avadd&") == 0 ||
++           path.Find(L"/goto/goto?") == 0 ||
++           path.Find(L"/profiles/profiles?") == 0 ||
++           path.Find(L"/eventmgmt/eventmgmt?op=mysched&") == 0 ||
++           path.Find(L"/places/places?") == 0 ||
++           path.Find(L"/eventmgmt/eventmgmt?op=zonesched&") == 0 ||
++           path.Find(L"/clubs/clubs") == 0 ||
++           path.Find(L"/listings/listings?") == 0 ||
++           path.Find(L"/about/about?poid=") == 0;
++}
 +
 +static DWORD WINAPI TmuiWebThread(LPVOID param)
 +{
 +    TmuiWebJob *job = static_cast<TmuiWebJob*>(param);
++    // public pages (shop, auctions, stylesheets): WinHTTP, off the game's stack
++    if (!job->post && !TmuiNeedsLogin(job->path) && TmuiWhLoad())
++    {
++        DWORD expect = 0;
++        CStringW type;
++        job->ok = TmuiHttpGet(job->path, job->data, type, expect);
++        if (!type.IsEmpty())
++            job->ctype = type;
++        HWND done = job->wnd;
++        InterlockedExchange(&job->done, 1);
++        if (done != nullptr)
++            PostMessage(done, WM_TMUI_WEB_DELIVER, 0, 0);
++        return 0;
++    }
 +    HINTERNET session = InternetOpen(L"ThereModernUI", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
 +    if (session != nullptr)
 +    {
@@ -130,18 +300,43 @@ index 7eb4acb..28f6513 100644
 +                                               nullptr, nullptr, INTERNET_SERVICE_HTTP, 0, 0);
 +        if (connection != nullptr)
 +        {
-+            HINTERNET request = HttpOpenRequest(connection, L"GET", job->path, nullptr, nullptr, nullptr,
-+                                                INTERNET_FLAG_SECURE | INTERNET_FLAG_NO_CACHE_WRITE |
-+                                                INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_COOKIES, 0);
++            // peer review pages and item About pages need the player's login.
++            // the game keeps it in this process's WinInet cookies (stock
++            // BrowserProxy hands the same ones to its browser), so for those
++            // pages WinInet may attach them. every other page stays cookie-free
++            bool login = TmuiNeedsLogin(job->path);
++            DWORD flags = INTERNET_FLAG_SECURE | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD;
++            if (!login)
++                flags |= INTERNET_FLAG_NO_COOKIES;
++            HINTERNET request = HttpOpenRequest(connection, job->post ? L"POST" : L"GET", job->path,
++                                                nullptr, nullptr, nullptr, flags, 0);
 +            if (request != nullptr)
 +            {
-+                if (HttpSendRequest(request, nullptr, 0, nullptr, 0))
++                CStringW headers;
++                if (job->post)
 +                {
++                    headers = L"Content-Type: ";
++                    headers += job->postType.IsEmpty() ? L"application/x-www-form-urlencoded" : job->postType.GetString();
++                    headers += L"\r\n";
++                }
++                BOOL sent = job->post ?
++                    HttpSendRequest(request, headers, static_cast<DWORD>(headers.GetLength()),
++                                    const_cast<char *>(job->postBody.GetString()),
++                                    static_cast<DWORD>(job->postBody.GetLength())) :
++                    HttpSendRequest(request, nullptr, 0, nullptr, 0);
++                if (sent)
++                {
++                    // pass on what the server says it sent (pictures as well as
++                    // pages come through here), not a blanket text/xml
++                    WCHAR type[128] = {0};
++                    DWORD typeLen = sizeof(type);
++                    if (HttpQueryInfo(request, HTTP_QUERY_CONTENT_TYPE, type, &typeLen, nullptr) && type[0] != 0)
++                        job->ctype = type;
 +                    char buffer[16384];
 +                    DWORD got = 0;
 +                    while (InternetReadFile(request, buffer, sizeof(buffer), &got) && got > 0)
 +                    {
-+                        job->data.Append(buffer, got);
++                        TmuiAppendBytes(job->data, buffer, static_cast<int>(got));
 +                        if (job->data.GetLength() > 4 * 1024 * 1024)
 +                            break;
 +                    }
@@ -276,10 +471,69 @@ index 7eb4acb..28f6513 100644
 +    job->wnd = m_proxyWnd;
 +    job->done = 0;
 +    job->ok = false;
++    job->post = false;
++
++    // a form post: only the auction listing form (the dock's Developer panel)
++    // may post, and it carries the page's own body as is
++    CComPtr<ICoreWebView2WebResourceRequest> request;
++    if (SUCCEEDED(args->get_Request(&request)) && request != nullptr)
++    {
++        LPWSTR method = nullptr;
++        if (SUCCEEDED(request->get_Method(&method)) && method != nullptr)
++        {
++            job->post = _wcsicmp(method, L"POST") == 0;
++            CoTaskMemFree(method);
++        }
++        if (job->post)
++        {
++            // the auction listing form and your own profile's edit form only
++            bool profileSave = job->path.Find(L"/profiles/profiles") == 0 &&
++                (job->path.GetLength() == 18 || job->path[18] == L'?');
++            // a group's own forms (send mail, invite, applications, settings)
++            bool clubForm = job->path.Find(L"/clubs/clubs") == 0 &&
++                (job->path.GetLength() == 12 || job->path[12] == L'?');
++            if (job->path.Find(L"/items/addquantity") != 0 && !profileSave && !clubForm)
++            {
++                job->post = false;
++                job->ok = false;
++                job->done = 1;
++            }
++            else
++            {
++                CComPtr<IStream> content;
++                if (SUCCEEDED(request->get_Content(&content)) && content != nullptr)
++                {
++                    char buffer[4096];
++                    ULONG got = 0;
++                    while (SUCCEEDED(content->Read(buffer, sizeof(buffer), &got)) && got > 0)
++                    {
++                        TmuiAppendBytes(job->postBody, buffer, static_cast<int>(got));
++                        if (job->postBody.GetLength() > 64 * 1024)
++                            break;
++                    }
++                }
++                CComPtr<ICoreWebView2HttpRequestHeaders> reqHeaders;
++                LPWSTR type = nullptr;
++                if (SUCCEEDED(request->get_Headers(&reqHeaders)) && reqHeaders != nullptr &&
++                    SUCCEEDED(reqHeaders->GetHeader(L"Content-Type", &type)) && type != nullptr)
++                {
++                    job->postType = type;
++                    CoTaskMemFree(type);
++                }
++            }
++        }
++    }
 +
 +    g_tmuiWebLock.Lock();
 +    g_tmuiWebJobs.Add(job);
 +    g_tmuiWebLock.Unlock();
++
++    // refused (a post somewhere it isn't allowed): answer straight away
++    if (job->done)
++    {
++        PostMessage(job->wnd, WM_TMUI_WEB_DELIVER, 0, 0);
++        return S_OK;
++    }
 +
 +    HANDLE thread = CreateThread(nullptr, 0, TmuiWebThread, job, 0, nullptr);
 +    if (thread == nullptr)
@@ -362,6 +616,404 @@ index 7eb4acb..28f6513 100644
 +    return S_OK;
 +}
 +
++// ThereModernUI: self-update. The dock asks (fsCommand "tmuiUpdate") and a
++// worker asks GitHub for our newest release, downloads its setup into
++// %LOCALAPPDATA%\There\TmuiUpdates, marks it as a web download (so Windows
++// treats it like one saved from a browser) and runs it. The page never hands
++// over a URL: the repo is fixed here and only a ThereModernUI-Setup-*.exe
++// under its own releases/download/ is taken. Progress goes back to the pages
++// as tmui_update: check, dl:<percent>, run, done, err:<what>.
++static const WCHAR *TMUI_UPDATE_REPO = L"Kronzy0nButtons/ThereModernUI";
++static const char *TMUI_UPDATE_REPO_A = "Kronzy0nButtons/ThereModernUI";
++static CComAutoCriticalSection g_tmuiUpdLock;
++static CStringW g_tmuiUpdState;
++static HWND g_tmuiUpdWnd = nullptr;
++static volatile LONG g_tmuiUpdBusy = 0;
++static DWORD g_tmuiUpdPct = 1000;
++// why the last request failed: an HTTP status, or a Windows error code
++static DWORD g_tmuiUpdWhy = 0;
++static WCHAR g_tmuiUpdLogPath[MAX_PATH] = {0};
++
++// every step goes to TmuiUpdates\update.log, so a failure can be read back
++static void TmuiUpdLog(const WCHAR *format, ...)
++{
++    if (g_tmuiUpdLogPath[0] == 0)
++        return;
++    WCHAR line[512];
++    SYSTEMTIME t;
++    GetLocalTime(&t);
++    int n = _snwprintf_s(line, _countof(line), _TRUNCATE, L"%02d:%02d:%02d ", t.wHour, t.wMinute, t.wSecond);
++    va_list args;
++    va_start(args, format);
++    _vsnwprintf_s(line + n, _countof(line) - n, _TRUNCATE, format, args);
++    va_end(args);
++    CStringA text = CW2A(line, CP_UTF8);
++    text += "\r\n";
++    HANDLE f = CreateFile(g_tmuiUpdLogPath, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
++    if (f != INVALID_HANDLE_VALUE)
++    {
++        DWORD wrote = 0;
++        WriteFile(f, (LPCSTR)text, text.GetLength(), &wrote, nullptr);
++        CloseHandle(f);
++    }
++}
++
++static void TmuiUpdSay(const WCHAR *state)
++{
++    g_tmuiUpdLock.Lock();
++    g_tmuiUpdState = state;
++    HWND wnd = g_tmuiUpdWnd;
++    g_tmuiUpdLock.Unlock();
++    if (wnd != nullptr)
++        PostMessage(wnd, WM_TMUI_UPDATE, 0, 0);
++}
++
++typedef void (*TmuiHttpProgress)(DWORD got, DWORD expect);
++
++// a GET from any https host over WinHTTP, redirects followed (GitHub hands
++// release files to its CDN). the body goes to `file` when given, else to
++// `out`, up to maxBytes; `progress` hears how much of the Content-Length is
++// in. true with a 200 and the whole body
++static bool TmuiHttpsGet(const WCHAR *host, const WCHAR *path, const WCHAR *headers, CStringA *out, HANDLE file, DWORD maxBytes, TmuiHttpProgress progress)
++{
++    g_tmuiUpdWhy = 0;
++    if (!TmuiWhLoad())
++    {
++        g_tmuiUpdWhy = 1;
++        return false;
++    }
++    bool ok = false;
++    LPVOID session = g_tmuiWh.open(L"ThereModernUI", 0, nullptr, nullptr, 0);
++    if (session == nullptr)
++    {
++        g_tmuiUpdWhy = GetLastError();
++        return false;
++    }
++    if (g_tmuiWh.timeouts != nullptr)
++        g_tmuiWh.timeouts(session, 15000, 15000, 30000, 60000);
++    LPVOID connection = g_tmuiWh.connect(session, host, 443, 0);
++    if (connection == nullptr)
++        g_tmuiUpdWhy = GetLastError();
++    if (connection != nullptr)
++    {
++        LPVOID request = g_tmuiWh.openRequest(connection, L"GET", path, nullptr, nullptr, nullptr, 0x00800000);
++        if (request == nullptr)
++            g_tmuiUpdWhy = GetLastError();
++        if (request != nullptr)
++        {
++            if (!g_tmuiWh.send(request, headers, headers != nullptr ? static_cast<DWORD>(-1) : 0, nullptr, 0, 0, 0) ||
++                !g_tmuiWh.receive(request, nullptr))
++                g_tmuiUpdWhy = GetLastError();
++            else
++            {
++                DWORD status = 0;
++                DWORD len = sizeof(status);
++                g_tmuiWh.query(request, 19 | 0x20000000, nullptr, &status, &len, nullptr);
++                DWORD expect = 0;
++                len = sizeof(expect);
++                if (!g_tmuiWh.query(request, 5 | 0x20000000, nullptr, &expect, &len, nullptr))
++                    expect = 0;
++                if (status != 200)
++                    g_tmuiUpdWhy = status;
++                if (status == 200)
++                {
++                    char buffer[32768];
++                    DWORD got = 0;
++                    DWORD total = 0;
++                    ok = true;
++                    while (g_tmuiWh.read(request, buffer, sizeof(buffer), &got) && got > 0)
++                    {
++                        total += got;
++                        if (total > maxBytes)
++                        {
++                            ok = false;
++                            break;
++                        }
++                        if (file != nullptr)
++                        {
++                            DWORD wrote = 0;
++                            if (!WriteFile(file, buffer, got, &wrote, nullptr) || wrote != got)
++                            {
++                                ok = false;
++                                break;
++                            }
++                        }
++                        else if (out != nullptr)
++                            TmuiAppendBytes(*out, buffer, static_cast<int>(got));
++                        if (progress != nullptr)
++                            progress(total, expect);
++                    }
++                    if (ok)
++                        ok = total > 0 && (expect == 0 || total == expect);
++                    if (!ok && g_tmuiUpdWhy == 0)
++                        g_tmuiUpdWhy = GetLastError() != 0 ? GetLastError() : 2;
++                }
++            }
++            g_tmuiWh.close(request);
++        }
++        g_tmuiWh.close(connection);
++    }
++    g_tmuiWh.close(session);
++    return ok;
++}
++
++// letters, digits, dot, dash and underscore only, and no ".."
++static bool TmuiUpdPlain(const CStringA &s)
++{
++    if (s.IsEmpty() || s.Find("..") >= 0)
++        return false;
++    for (int i = 0; i < s.GetLength(); ++i)
++    {
++        char c = s[i];
++        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
++              c == '.' || c == '_' || c == '-'))
++            return false;
++    }
++    return true;
++}
++
++// the setup among the release's files: the first browser_download_url under
++// our own repo's releases/download/, named ThereModernUI-Setup-<something>.exe
++// with nothing but plain characters in the tag and the file name
++static bool TmuiUpdPickAsset(const CStringA &json, CStringA &url, CStringA &name)
++{
++    CStringA base;
++    base.Format("https://github.com/%s/releases/download/", TMUI_UPDATE_REPO_A);
++    int pos = 0;
++    for (;;)
++    {
++        pos = json.Find("\"browser_download_url\"", pos);
++        if (pos < 0)
++            return false;
++        int open = json.Find('"', pos + 22);
++        if (open < 0)
++            return false;
++        int close = json.Find('"', open + 1);
++        if (close < 0)
++            return false;
++        CStringA value = json.Mid(open + 1, close - open - 1);
++        pos = close + 1;
++        if (value.Find(base) != 0 || value.GetLength() > 300)
++            continue;
++        CStringA rest = value.Mid(base.GetLength());
++        int slash = rest.Find('/');
++        if (slash <= 0)
++            continue;
++        CStringA tag = rest.Left(slash);
++        CStringA file = rest.Mid(slash + 1);
++        if (!TmuiUpdPlain(tag) || !TmuiUpdPlain(file) || tag.GetLength() > 40 || file.GetLength() > 80)
++            continue;
++        if (file.Find("ThereModernUI-Setup-") != 0 || file.GetLength() < 25 || file.Right(4).CompareNoCase(".exe") != 0)
++            continue;
++        url = value;
++        name = file;
++        return true;
++    }
++}
++
++// %LOCALAPPDATA%\There\TmuiUpdates, made if need be
++static bool TmuiUpdDir(WCHAR *dir)
++{
++    dir[0] = 0;
++    if (FAILED(SHGetFolderPath(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, dir)) || dir[0] == 0)
++        return false;
++    if (!PathAppend(dir, L"There"))
++        return false;
++    CreateDirectory(dir, nullptr);
++    if (!PathAppend(dir, L"TmuiUpdates"))
++        return false;
++    CreateDirectory(dir, nullptr);
++    return GetFileAttributes(dir) != INVALID_FILE_ATTRIBUTES;
++}
++
++// every other percent is plenty for a strip of text
++static void TmuiUpdProgress(DWORD got, DWORD expect)
++{
++    if (expect == 0)
++        return;
++    DWORD pct = static_cast<DWORD>(static_cast<unsigned long long>(got) * 100 / expect);
++    if (pct > 100)
++        pct = 100;
++    if (pct == g_tmuiUpdPct || (pct % 2 != 0 && pct != 100))
++        return;
++    g_tmuiUpdPct = pct;
++    WCHAR s[24];
++    _snwprintf_s(s, _countof(s), _TRUNCATE, L"dl:%u", pct);
++    TmuiUpdSay(s);
++}
++
++static DWORD WINAPI TmuiUpdateThread(LPVOID)
++{
++    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
++    const WCHAR *fail = nullptr;
++    CStringA json;
++    CStringA url;
++    CStringA name;
++    WCHAR dir[MAX_PATH] = {0};
++    WCHAR path[MAX_PATH] = {0};
++
++    WCHAR failText[48] = {0};
++    TmuiUpdSay(L"check");
++    if (!TmuiUpdDir(dir))
++        fail = L"err:folder";
++    else
++    {
++        wcscpy_s(g_tmuiUpdLogPath, dir);
++        if (!PathAppend(g_tmuiUpdLogPath, L"update.log"))
++            g_tmuiUpdLogPath[0] = 0;
++        TmuiUpdLog(L"---- update started");
++    }
++    CStringW api;
++    api.Format(L"/repos/%s/releases/latest", TMUI_UPDATE_REPO);
++    if (fail == nullptr && !TmuiHttpsGet(L"api.github.com", api, L"Accept: application/vnd.github+json\r\n", &json, nullptr, 2 * 1024 * 1024, nullptr))
++    {
++        TmuiUpdLog(L"release info failed, code %lu", g_tmuiUpdWhy);
++        _snwprintf_s(failText, _countof(failText), _TRUNCATE, L"err:net-%lu", g_tmuiUpdWhy);
++        fail = failText;
++    }
++    else if (fail == nullptr && !TmuiUpdPickAsset(json, url, name))
++    {
++        TmuiUpdLog(L"no setup among the release's files (%d bytes of release info)", json.GetLength());
++        fail = L"err:noasset";
++    }
++    if (fail == nullptr)
++    {
++        TmuiUpdLog(L"setup: %S", (LPCSTR)url);
++        wcscpy_s(path, dir);
++        if (!PathAppend(path, CA2W(name)))
++            fail = L"err:folder";
++    }
++    if (fail == nullptr)
++    {
++        g_tmuiUpdPct = 1000;
++        TmuiUpdSay(L"dl:0");
++        HANDLE file = CreateFile(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
++        if (file == INVALID_HANDLE_VALUE)
++        {
++            DWORD e = GetLastError();
++            TmuiUpdLog(L"cannot write %s, code %lu", path, e);
++            _snwprintf_s(failText, _countof(failText), _TRUNCATE, L"err:write-%lu", e);
++            fail = failText;
++        }
++        else
++        {
++            // "https://github.com" is 18 characters: the path is the rest
++            bool ok = TmuiHttpsGet(L"github.com", CA2W(url.Mid(18)), nullptr, nullptr, file, 200 * 1024 * 1024, TmuiUpdProgress);
++            LARGE_INTEGER size = {};
++            if (ok && (!GetFileSizeEx(file, &size) || size.QuadPart < 200 * 1024))
++                ok = false;
++            CloseHandle(file);
++            if (ok)
++            {
++                // a Windows program starts with MZ: anything else is not our setup
++                char head[2] = {0, 0};
++                HANDLE check = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
++                if (check != INVALID_HANDLE_VALUE)
++                {
++                    DWORD got = 0;
++                    ReadFile(check, head, 2, &got, nullptr);
++                    CloseHandle(check);
++                }
++                ok = head[0] == 'M' && head[1] == 'Z';
++            }
++            if (!ok)
++            {
++                TmuiUpdLog(L"download failed, code %lu, %lld bytes", g_tmuiUpdWhy, size.QuadPart);
++                DeleteFile(path);
++                _snwprintf_s(failText, _countof(failText), _TRUNCATE, L"err:download-%lu", g_tmuiUpdWhy);
++                fail = failText;
++            }
++            else
++                TmuiUpdLog(L"downloaded %lld bytes", size.QuadPart);
++        }
++    }
++    if (fail == nullptr)
++    {
++        // the mark of the web, as a browser would leave it
++        CStringW zone = path;
++        zone += L":Zone.Identifier";
++        HANDLE z = CreateFile(zone, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
++        if (z != INVALID_HANDLE_VALUE)
++        {
++            CStringA text;
++            text.Format("[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://github.com/%s/releases\r\nHostUrl=%s\r\n", TMUI_UPDATE_REPO_A, (LPCSTR)url);
++            DWORD wrote = 0;
++            WriteFile(z, (LPCSTR)text, text.GetLength(), &wrote, nullptr);
++            CloseHandle(z);
++        }
++        TmuiUpdSay(L"run");
++        // the shell first (it shows Windows' usual checks for a downloaded
++        // program); inside the game that can fail, so then start it directly
++        SHELLEXECUTEINFOW info = {sizeof(info)};
++        info.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
++        info.lpVerb = L"open";
++        info.lpFile = path;
++        info.lpParameters = L"/TMUIFROMDOCK=1";
++        info.lpDirectory = dir;
++        info.nShow = SW_SHOWNORMAL;
++        if (ShellExecuteExW(&info))
++            TmuiUpdLog(L"setup started (shell)");
++        else
++        {
++            DWORD e = GetLastError();
++            TmuiUpdLog(L"shell start failed, code %lu, trying directly", e);
++            CStringW cmd;
++            cmd.Format(L"\"%s\" /TMUIFROMDOCK=1", path);
++            STARTUPINFOW si = {sizeof(si)};
++            PROCESS_INFORMATION pi = {};
++            if (CreateProcessW(path, cmd.GetBuffer(), nullptr, nullptr, FALSE, 0, nullptr, dir, &si, &pi))
++            {
++                CloseHandle(pi.hThread);
++                CloseHandle(pi.hProcess);
++                TmuiUpdLog(L"setup started (direct)");
++            }
++            else
++            {
++                DWORD e2 = GetLastError();
++                TmuiUpdLog(L"direct start failed, code %lu", e2);
++                _snwprintf_s(failText, _countof(failText), _TRUNCATE, L"err:run-%lu-%lu", e, e2);
++                fail = failText;
++            }
++            cmd.ReleaseBuffer();
++        }
++    }
++    TmuiUpdLog(L"result: %s", fail != nullptr ? fail : L"done");
++    TmuiUpdSay(fail != nullptr ? fail : L"done");
++    InterlockedExchange(&g_tmuiUpdBusy, 0);
++    CoUninitialize();
++    return 0;
++}
++
++// the dock asked: one run at a time, progress to whoever subscribed
++void FlashProxyModule::TmuiUpdateStart()
++{
++    if (InterlockedCompareExchange(&g_tmuiUpdBusy, 1, 0) != 0)
++        return;
++    g_tmuiUpdLock.Lock();
++    g_tmuiUpdWnd = m_proxyWnd;
++    g_tmuiUpdLock.Unlock();
++    HANDLE thread = CreateThread(nullptr, 0, TmuiUpdateThread, nullptr, 0, nullptr);
++    if (thread == nullptr)
++    {
++        InterlockedExchange(&g_tmuiUpdBusy, 0);
++        TmuiPostVariable(L"tmui_update", L"err:thread");
++        return;
++    }
++    CloseHandle(thread);
++}
++
++// on the UI thread: the worker's latest word, to every subscribed page
++void FlashProxyModule::TmuiUpdateDeliver()
++{
++    g_tmuiUpdLock.Lock();
++    CStringW state = g_tmuiUpdState;
++    g_tmuiUpdLock.Unlock();
++    if (state.IsEmpty())
++        return;
++    for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++        g_tmuiSubscribers[j]->TmuiPostVariable(L"tmui_update", state);
++}
++
 +// ThereModernUI: the picture store. Catalog photos (wardrobe, inventory) are
 +// kept on disk under %LOCALAPPDATA%\There\TmuiImages and served from there,
 +// so each one is downloaded once, ever, instead of every time the browser
@@ -391,6 +1043,12 @@ index 7eb4acb..28f6513 100644
 +                              _wcsicmp(ext, L".jpeg") == 0 || _wcsicmp(ext, L".png") == 0);
 +}
 +
++// ThereModernUI: the client's folder and the picture store are also mapped
++// as virtual hosts (tmui.res, tmui.img), which WebView2 serves straight off
++// the disk itself: no request event, no deferral, nothing on the game's
++// thread. The dock uses them when the DLL says they're up (tmui_vhost).
++static bool g_tmuiVhost = false;
++
 +static bool TmuiImgDirReady()
 +{
 +    if (g_tmuiImgDir[0] != 0)
@@ -401,7 +1059,37 @@ index 7eb4acb..28f6513 100644
 +    if (!PathAppend(dir, L"There"))
 +        return false;
 +    CreateDirectory(dir, nullptr);
-+    if (!PathAppend(dir, L"TmuiImages"))
++    // the first picture store saved every file cut short: clear it out
++    {
++        WCHAR old[MAX_PATH];
++        wcscpy_s(old, dir);
++        if (PathAppend(old, L"TmuiImages") && GetFileAttributes(old) != INVALID_FILE_ATTRIBUTES)
++        {
++            WCHAR pattern[MAX_PATH];
++            wcscpy_s(pattern, old);
++            if (PathAppend(pattern, L"*"))
++            {
++                WIN32_FIND_DATA found;
++                HANDLE find = FindFirstFile(pattern, &found);
++                if (find != INVALID_HANDLE_VALUE)
++                {
++                    do
++                    {
++                        if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
++                        {
++                            WCHAR file[MAX_PATH];
++                            wcscpy_s(file, old);
++                            if (PathAppend(file, found.cFileName))
++                                DeleteFile(file);
++                        }
++                    } while (FindNextFile(find, &found));
++                    FindClose(find);
++                }
++            }
++            RemoveDirectory(old);
++        }
++    }
++    if (!PathAppend(dir, L"TmuiPhotos"))
 +        return false;
 +    CreateDirectory(dir, nullptr);
 +    if (GetFileAttributes(dir) == INVALID_FILE_ATTRIBUTES)
@@ -439,11 +1127,6 @@ index 7eb4acb..28f6513 100644
 +
 +static DWORD WINAPI TmuiImgThread(LPVOID)
 +{
-+    // one session per worker: the connection to the image host is reused
-+    HINTERNET session = InternetOpen(L"ThereModernUI", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
-+    HINTERNET connection = session != nullptr ?
-+        InternetConnect(session, L"webapps.prod.there.com", INTERNET_DEFAULT_HTTPS_PORT,
-+                        nullptr, nullptr, INTERNET_SERVICE_HTTP, 0, 0) : nullptr;
 +    for (;;)
 +    {
 +        WaitForSingleObject(g_tmuiImgSem, INFINITE);
@@ -459,54 +1142,36 @@ index 7eb4acb..28f6513 100644
 +            continue;
 +
 +        bool have = TmuiReadWhole(job->file, job->data);
-+        if (!have && connection != nullptr)
++        if (!have)
 +        {
 +            CStringW path(L"/catalog/media/");
 +            path += job->path;
-+            HINTERNET request = HttpOpenRequest(connection, L"GET", path, nullptr, nullptr, nullptr,
-+                                                INTERNET_FLAG_SECURE | INTERNET_FLAG_NO_COOKIES |
-+                                                INTERNET_FLAG_KEEP_CONNECTION | INTERNET_FLAG_NO_CACHE_WRITE, 0);
-+            if (request != nullptr)
++            CStringA body;
++            CStringW type;
++            DWORD expect = 0;
++            // only a complete file is kept: the size the server said it sent
++            if (TmuiHttpGet(path, body, type, expect) &&
++                (expect == 0 || static_cast<DWORD>(body.GetLength()) == expect) &&
++                body.GetLength() <= 8 * 1024 * 1024)
 +            {
-+                DWORD status = 0;
-+                DWORD statusLen = sizeof(status);
-+                if (HttpSendRequest(request, nullptr, 0, nullptr, 0) &&
-+                    HttpQueryInfo(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &statusLen, nullptr) &&
-+                    status == 200)
++                // write beside it, then swap in: a half-written file is never served
++                WCHAR part[MAX_PATH + 32];
++                _snwprintf_s(part, _countof(part), _TRUNCATE, L"%s.%lu.part",
++                             job->file.GetString(), GetCurrentThreadId());
++                HANDLE file = CreateFile(part, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
++                                         FILE_ATTRIBUTE_NORMAL, nullptr);
++                if (file != INVALID_HANDLE_VALUE)
 +                {
-+                    CStringA body;
-+                    char buffer[16384];
-+                    DWORD got = 0;
-+                    while (InternetReadFile(request, buffer, sizeof(buffer), &got) && got > 0)
-+                    {
-+                        body.Append(buffer, got);
-+                        if (body.GetLength() > 8 * 1024 * 1024)
-+                            break;
-+                    }
-+                    if (body.GetLength() > 0 && body.GetLength() <= 8 * 1024 * 1024)
-+                    {
-+                        // write beside it, then swap in: a half-written file
-+                        // is never served
-+                        WCHAR part[MAX_PATH + 32];
-+                        _snwprintf_s(part, _countof(part), _TRUNCATE, L"%s.%lu.part",
-+                                     job->file.GetString(), GetCurrentThreadId());
-+                        HANDLE file = CreateFile(part, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-+                                                 FILE_ATTRIBUTE_NORMAL, nullptr);
-+                        if (file != INVALID_HANDLE_VALUE)
-+                        {
-+                            DWORD wrote = 0;
-+                            BOOL written = WriteFile(file, body.GetString(), body.GetLength(), &wrote, nullptr);
-+                            CloseHandle(file);
-+                            if (written && wrote == static_cast<DWORD>(body.GetLength()))
-+                                MoveFileEx(part, job->file, MOVEFILE_REPLACE_EXISTING);
-+                            else
-+                                DeleteFile(part);
-+                        }
-+                        job->data = body;
-+                        have = true;
-+                    }
++                    DWORD wrote = 0;
++                    BOOL written = WriteFile(file, body.GetString(), body.GetLength(), &wrote, nullptr);
++                    CloseHandle(file);
++                    if (written && wrote == static_cast<DWORD>(body.GetLength()))
++                        MoveFileEx(part, job->file, MOVEFILE_REPLACE_EXISTING);
++                    else
++                        DeleteFile(part);
 +                }
-+                InternetCloseHandle(request);
++                job->data = body;
++                have = true;
 +            }
 +        }
 +
@@ -535,7 +1200,8 @@ index 7eb4acb..28f6513 100644
 +        g_tmuiImgSem = CreateSemaphore(nullptr, 0, 0x7FFFFFFF, nullptr);
 +        if (g_tmuiImgSem != nullptr)
 +        {
-+            for (int i = 0; i < 4; ++i)
++            // two at a time: steady, and gentle on the image host
++            for (int i = 0; i < 2; ++i)
 +            {
 +                HANDLE thread = CreateThread(nullptr, 0, TmuiImgThread, nullptr, 0, nullptr);
 +                if (thread != nullptr)
@@ -794,8 +1460,9 @@ index 7eb4acb..28f6513 100644
 +        g_tmuiDown[i] = raw;
 +    }
 +
-+    // right mouse button held in game = vehicle boost, the dock's boost gauge
-+    // follows it. posted only on change
++    // the mouse buttons held in game: in a buggy the right one is boost, on
++    // a board it jumps and the left one boosts. the dock's boost gauge sorts
++    // that out, it gets both. posted only on change
 +    {
 +        static LONG rmbLast = -1;
 +        LONG rmb = (active && GetAsyncKeyState(VK_RBUTTON) < 0) ? 1 : 0;
@@ -804,6 +1471,14 @@ index 7eb4acb..28f6513 100644
 +            rmbLast = rmb;
 +            for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
 +                g_tmuiSubscribers[j]->TmuiPostVariable(L"tmui_rmb", rmb ? L"1" : L"0");
++        }
++        static LONG lmbLast = -1;
++        LONG lmb = (active && GetAsyncKeyState(VK_LBUTTON) < 0) ? 1 : 0;
++        if (lmb != lmbLast)
++        {
++            lmbLast = lmb;
++            for (int j = 0; j < g_tmuiSubscribers.GetSize(); ++j)
++                g_tmuiSubscribers[j]->TmuiPostVariable(L"tmui_lmb", lmb ? L"1" : L"0");
 +        }
 +    }
 +
@@ -1176,7 +1851,7 @@ index 7eb4acb..28f6513 100644
  void Log(const WCHAR *format, ...)
  {
  #ifdef THERE_LOGGING
-@@ -123,6 +1278,10 @@ FlashProxyModule::FlashProxyModule():
+@@ -123,6 +1946,10 @@ FlashProxyModule::FlashProxyModule():
      m_clientWnd(nullptr),
      m_maskRects(),
      m_maskRectCount(0),
@@ -1187,7 +1862,7 @@ index 7eb4acb..28f6513 100644
      m_encodeBuffer(),
      m_identity(Identity::Unknown),
      m_visibilityMask(0),
-@@ -165,6 +1324,14 @@ FlashProxyModule::FlashProxyModule():
+@@ -165,6 +1992,14 @@ FlashProxyModule::FlashProxyModule():
  
  FlashProxyModule::~FlashProxyModule()
  {
@@ -1202,7 +1877,7 @@ index 7eb4acb..28f6513 100644
      if (m_view != nullptr)
      {
          m_view->remove_WebMessageReceived(m_webMessageReceivedToken);
-@@ -513,7 +1680,16 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::DoVerb(LONG iVerb, LPMSG lpmsg, IOle
+@@ -513,7 +2348,16 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::DoVerb(LONG iVerb, LPMSG lpmsg, IOle
                  }
              }
  
@@ -1220,7 +1895,7 @@ index 7eb4acb..28f6513 100644
                  return E_FAIL;
  
              return S_OK;
-@@ -580,6 +1756,23 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::QueryHitPoint(DWORD dwAspect, LPCREC
+@@ -580,6 +2424,23 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::QueryHitPoint(DWORD dwAspect, LPCREC
          return S_OK;
      }
  
@@ -1244,7 +1919,52 @@ index 7eb4acb..28f6513 100644
      for (LONG i = 0; i < m_maskRectCount; ++i)
      {
          RECT maskRect = m_maskRects[m_maskRectCount];
-@@ -996,6 +2189,99 @@ HRESULT FlashProxyModule::OnWebMessageReceived(ICoreWebView2 *sender, ICoreWebVi
+@@ -808,6 +2669,13 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::put_Movie(BSTR pVal)
+ 
+     m_url = burl;
+ 
++    // the webview may already exist: start the teleport screen black here too
++    if (m_identity == Identity::Teleport && m_controller != nullptr)
++    {
++        COREWEBVIEW2_COLOR black = {255, 0, 0, 0};
++        m_controller->put_DefaultBackgroundColor(black);
++    }
++
+     if (FAILED(Navigate()))
+         return E_FAIL;
+ 
+@@ -886,11 +2754,30 @@ HRESULT STDMETHODCALLTYPE FlashProxyModule::Invoke(HRESULT errorCode, ICoreWebVi
+     settings->put_IsScriptEnabled(true);
+     settings->put_IsWebMessageEnabled(true);
+ 
++    {
++        CComPtr<ICoreWebView2_3> view3;
++        if (SUCCEEDED(m_view->QueryInterface(IID_PPV_ARGS(&view3))) && view3 != nullptr)
++        {
++            if (g_tmuiFileBase[0] == 0)
++                GetCurrentDirectory(_countof(g_tmuiFileBase), g_tmuiFileBase);
++            bool ok = g_tmuiFileBase[0] != 0 &&
++                SUCCEEDED(view3->SetVirtualHostNameToFolderMapping(L"tmui.res", g_tmuiFileBase, COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW));
++            if (ok && TmuiImgDirReady())
++                ok = SUCCEEDED(view3->SetVirtualHostNameToFolderMapping(L"tmui.img", g_tmuiImgDir, COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW));
++            if (ok)
++                g_tmuiVhost = true;
++        }
++    }
++
+     RECT bounds;
+     GetClientRect(m_proxyWnd, &bounds);
+     m_controller->put_Bounds(bounds);
+ 
++    // the teleport screen is opaque: start it black so the frames before the
++    // page paints aren't white. everything else stays see-through
+     COREWEBVIEW2_COLOR color = {0, 0, 0, 0};
++    if (m_identity == Identity::Teleport)
++        color.A = 255;
+     m_controller->put_DefaultBackgroundColor(color);
+ 
+     m_controller->put_ShouldDetectMonitorScaleChanges(false);
+@@ -996,6 +2883,123 @@ HRESULT FlashProxyModule::OnWebMessageReceived(ICoreWebView2 *sender, ICoreWebVi
      if (_wcsicmp(bcommand, L"getKeyboardFocus") == 0)
          return E_NOTIMPL;
  
@@ -1260,6 +1980,23 @@ index 7eb4acb..28f6513 100644
 +        // the picture store is here: the dock can use /tmui-img/
 +        if (TmuiImgDirReady())
 +            TmuiPostVariable(L"tmui_imgcache", L"1");
++        // the folders are served by WebView2 itself: nothing on our thread
++        if (g_tmuiVhost)
++            TmuiPostVariable(L"tmui_vhost", L"1");
++        // a page loading mid-session needs the current Action Mode state too:
++        // otherwise it only hears about the next change
++        TmuiPostVariable(L"tmui_actionmode", g_kmActionMode ? L"1" : L"0");
++        // the setup can be fetched and run from here (tmuiUpdate); a download
++        // already running tells the new page how far it is
++        TmuiPostVariable(L"tmui_updater", L"1");
++        if (g_tmuiUpdBusy)
++        {
++            g_tmuiUpdLock.Lock();
++            CStringW state = g_tmuiUpdState;
++            g_tmuiUpdLock.Unlock();
++            if (!state.IsEmpty())
++                TmuiPostVariable(L"tmui_update", state);
++        }
 +        return S_OK;
 +    }
 +
@@ -1267,6 +2004,13 @@ index 7eb4acb..28f6513 100644
 +    if (_wcsicmp(bcommand, L"tmuiPrefetch") == 0)
 +    {
 +        TmuiImgPrefetch(bquery);
++        return S_OK;
++    }
++
++    // ThereModernUI: fetch our newest setup from GitHub and run it
++    if (_wcsicmp(bcommand, L"tmuiUpdate") == 0)
++    {
++        TmuiUpdateStart();
 +        return S_OK;
 +    }
 +
@@ -1344,7 +2088,7 @@ index 7eb4acb..28f6513 100644
      VARIANTARG vargs[2];
      vargs[0].vt = VT_BSTR;
      vargs[0].bstrVal = bquery;
-@@ -1066,7 +2352,32 @@ HRESULT FlashProxyModule::OnWebResourceRequested(ICoreWebView2 *sender, ICoreWeb
+@@ -1066,7 +3070,32 @@ HRESULT FlashProxyModule::OnWebResourceRequested(ICoreWebView2 *sender, ICoreWeb
          return S_OK;
      }
  
@@ -1378,7 +2122,7 @@ index 7eb4acb..28f6513 100644
      if (flashRequestProxy == nullptr)
          return E_FAIL;
  
-@@ -1217,6 +2528,15 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
+@@ -1217,6 +3246,15 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
      if (m_proxyWnd == nullptr)
          return S_OK;
  
@@ -1394,7 +2138,7 @@ index 7eb4acb..28f6513 100644
      SetWindowPos(m_proxyWnd, nullptr, m_pos.cx, m_pos.cy, max(1, m_size.cx), max(1, m_size.cy), flags | SWP_NOZORDER | SWP_NOACTIVATE);
      SetVisibility(m_visibilityMask);
      GuessToolbarVisibility();
-@@ -1237,6 +2557,130 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
+@@ -1237,6 +3275,130 @@ HRESULT FlashProxyModule::SetRect(const RECT &rect)
      return S_OK;
  }
  
@@ -1525,7 +2269,7 @@ index 7eb4acb..28f6513 100644
  HRESULT FlashProxyModule::SetMaskRects(WCHAR *text)
  {
      for (m_maskRectCount = 0; m_maskRectCount < _countof(m_maskRects) && text[0] != 0; ++m_maskRectCount)
-@@ -1479,6 +2923,15 @@ LRESULT APIENTRY FlashProxyModule::ChildWndProc(HWND hWnd, UINT Msg, WPARAM wPar
+@@ -1479,6 +3641,21 @@ LRESULT APIENTRY FlashProxyModule::ChildWndProc(HWND hWnd, UINT Msg, WPARAM wPar
              return 0;
          }
  
@@ -1538,14 +2282,20 @@ index 7eb4acb..28f6513 100644
 +            return 0;
 +        }
 +
++        case WM_TMUI_UPDATE:
++        {
++            TmuiUpdateDeliver();
++            return 0;
++        }
++
          case WM_FLASHPROXY_REQUEST_VISIBILITY:
          {
              if (flashProxy != nullptr)
 diff --git a/FlashProxy/FlashProxy.h b/FlashProxy/FlashProxy.h
-index b3a3f78..379d55b 100644
+index b3a3f78..5c1eca2 100644
 --- a/FlashProxy/FlashProxy.h
 +++ b/FlashProxy/FlashProxy.h
-@@ -227,6 +227,26 @@ protected:
+@@ -227,6 +227,28 @@ protected:
  public:
      static LRESULT APIENTRY ChildWndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
  
@@ -1564,6 +2314,8 @@ index b3a3f78..379d55b 100644
 +    HRESULT TmuiImgFetch(ICoreWebView2WebResourceRequestedEventArgs *args, const WCHAR *name);
 +    void TmuiImgPrefetch(const WCHAR *query);
 +    static void TmuiWebDeliver();
++    void TmuiUpdateStart();
++    static void TmuiUpdateDeliver();
 +    static void TmuiRelayDeliver();
 +    static LRESULT CALLBACK TmuiKeymapProc(int code, WPARAM wParam, LPARAM lParam);
 +    static void TmuiSetKeymap(bool on);
@@ -1572,7 +2324,7 @@ index b3a3f78..379d55b 100644
  protected:
      ULONG                                    m_refCount;
      QACONTAINER                              m_qaContainer;
-@@ -237,6 +257,11 @@ protected:
+@@ -237,6 +259,11 @@ protected:
      HWND                                     m_clientWnd;
      RECT                                     m_maskRects[10];
      LONG                                     m_maskRectCount;

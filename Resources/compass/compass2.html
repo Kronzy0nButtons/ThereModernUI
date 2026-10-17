@@ -394,6 +394,61 @@
 <body>
 <div class="dockroot" data-state="shown" data-ready="0" data-panel="" data-cockpit="checking">
 <div class="speedo" data-active="0" title="Speed">
+<svg class="spdhousing" aria-hidden="true"><defs><linearGradient id="housegrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2d333c"></stop><stop offset="0.5" stop-color="#1c2026"></stop><stop offset="1" stop-color="#15181d"></stop></linearGradient></defs><path class="shedge"></path><path class="shbody"></path><path class="shshine"></path></svg>
+<svg class="spdrim" aria-hidden="true"><path class="srscreen"></path><path class="srshine"></path></svg>
+<div class="spdgpsbtn" title="GPS" data-icon="map-location-dot"></div>
+<div class="gpsctlbtn gpsside" data-id="zoomin" title="Zoom in">+</div>
+<div class="gpsctlbtn gpsside" data-id="zoomout" title="Zoom out">&#8722;</div>
+<div class="gpsctlbtn gpsside gpsdim" data-id="dim" title="Switch between the 3D and the flat map">3D</div>
+<div class="spdgps">
+<div class="gpsbezel">
+<div class="gpsscreen">
+<div class="gpsview"><div class="gpsplane"><div class="gpssea"></div><div class="gpsmap"><img class="gpsimg" alt=""></div></div></div>
+<div class="gpsfog"></div>
+<div class="gpscar"></div>
+<svg class="gpsai" viewBox="0 0 200 130" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+<g class="aihorizon">
+<line class="ailine" x1="-300" y1="88" x2="500" y2="88"></line>
+<g class="aipitch">
+<line x1="78" y1="66" x2="92" y2="66"></line><line x1="108" y1="66" x2="122" y2="66"></line><text x="126" y="68.5">10</text><text x="74" y="68.5" text-anchor="end">10</text>
+<line x1="72" y1="44" x2="90" y2="44"></line><line x1="110" y1="44" x2="128" y2="44"></line><text x="132" y="46.5">20</text><text x="68" y="46.5" text-anchor="end">20</text>
+<line class="aidown" x1="78" y1="110" x2="92" y2="110"></line><line class="aidown" x1="108" y1="110" x2="122" y2="110"></line><text x="126" y="112.5">10</text><text x="74" y="112.5" text-anchor="end">10</text>
+<line class="aidown" x1="72" y1="132" x2="90" y2="132"></line><line class="aidown" x1="110" y1="132" x2="128" y2="132"></line>
+</g></g>
+<path class="aiplane" d="M58 88 H84 L89 93 M111 93 L116 88 H142"></path>
+<path class="aibankmarks" d="M100 29 V33 M89.6 30.9 L90.3 34.8 M110.4 30.9 L109.7 34.8 M79.5 34.5 L81 38.2 M120.5 34.5 L119 38.2 M66.1 44.6 L68.5 47.8 M133.9 44.6 L131.5 47.8"></path>
+<path class="aibank" d="M100 36 L97 41 H103 Z"></path>
+</svg>
+<div class="gpstape"><div class="gpstapeinner"></div><div class="gpstapemark"></div></div>
+<div class="gpsname"></div>
+<div class="gpsglass"></div>
+
+</div>
+<div class="gpsstrip">
+<div class="spdgpsbtn gpsstripbtn" title="Close the map" data-icon="map-location-dot"></div>
+<span class="gpsled"></span><span class="gpslabel">GPS</span>
+<span class="gpshead"><span class="gpslink">LINKING</span><span class="gpscard">N</span><span class="gpsdeg">000&#176;</span></span>
+<span class="gpssig"><i></i><i></i><i></i><i></i></span>
+</div>
+</div>
+</div>
+<div class="spdmain">
+<svg class="spdgauge" viewBox="0 0 200 200" aria-hidden="true">
+<circle class="sgface" cx="100" cy="102" r="98"></circle><defs><linearGradient id="dialbevel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.32"></stop><stop offset="0.45" stop-color="#ffffff" stop-opacity="0.06"></stop><stop offset="1" stop-color="#ffffff" stop-opacity="0"></stop></linearGradient></defs><circle class="sgbevel" cx="100" cy="102" r="97"></circle>
+<g class="sgdial" transform="translate(0 -3)"><path class="sgtrack" d="M 25.5 147 A 86 86 0 1 1 174.5 147"></path>
+<path class="sgred" d="M 179.0 70.0 A 86 86 0 0 1 174.5 147"></path>
+<path class="sgfill" d="M 25.5 147 A 86 86 0 1 1 174.5 147"></path>
+<g class="sgticks"></g>
+<g class="sglabels"></g>
+<g class="sgneedle"><line x1="112" y1="104" x2="34" y2="104"></line></g>
+<circle class="sghub" cx="100" cy="104" r="7"></circle></g>
+<defs><linearGradient id="dialglass" x1="0" y1="0" x2="1" y2="0.9"><stop offset="0" stop-color="#ffffff" stop-opacity="0.16"></stop><stop offset="0.3" stop-color="#ffffff" stop-opacity="0.05"></stop><stop offset="0.46" stop-color="#ffffff" stop-opacity="0"></stop></linearGradient><radialGradient id="dialglint" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#ffffff" stop-opacity="0.07"></stop><stop offset="1" stop-color="#ffffff" stop-opacity="0"></stop></radialGradient></defs>
+<circle class="sgglass" cx="100" cy="102" r="97"></circle><ellipse class="sgglint" cx="146" cy="160" rx="34" ry="14" transform="rotate(-38 146 160)"></ellipse>
+</svg>
+<div class="spdreadout">
+<div class="spdrow"><span class="spdgear">N</span><span class="spdval">0</span></div>
+<span class="spdunit">mph</span>
+</div>
 <svg class="spdboost" viewBox="0 0 90 62" aria-hidden="true">
 <defs>
 <linearGradient id="n2ograd" x1="0" y1="1" x2="1" y2="0">
@@ -401,36 +456,15 @@
 <stop offset="1" stop-color="#a78bfa"></stop>
 </linearGradient>
 </defs>
-<circle class="sbface" cx="45" cy="50" r="40"></circle>
+<circle class="sbface" cx="45" cy="50" r="40"></circle><circle class="sbbevel" cx="45" cy="50" r="39"></circle>
 <path class="sbtrack" d="M 11 50 A 34 34 0 0 1 79 50"></path>
 <path class="sbfill" d="M 11 50 A 34 34 0 0 1 79 50"></path>
 <path class="sbred" d="M 69.0 26.0 A 34 34 0 0 1 79 50"></path>
 <g class="sbneedle"><line x1="45" y1="50" x2="18" y2="50"></line></g>
 <circle class="sbhub" cx="45" cy="50" r="3"></circle>
 <text class="sblabel" x="45" y="70">N2O</text>
+<circle class="sbglass" cx="45" cy="50" r="39"></circle>
 </svg>
-<div class="spdmain">
-<svg class="spdgauge" viewBox="0 0 200 200" aria-hidden="true">
-<circle class="sgface" cx="100" cy="104" r="92"></circle>
-<path class="sgtrack" d="M 25.5 147 A 86 86 0 1 1 174.5 147"></path>
-<path class="sgred" d="M 179.0 70.0 A 86 86 0 0 1 174.5 147"></path>
-<path class="sgfill" d="M 25.5 147 A 86 86 0 1 1 174.5 147"></path>
-<g class="sgticks"></g>
-<g class="sglabels"></g>
-<g class="sgneedle"><line x1="112" y1="104" x2="34" y2="104"></line></g>
-<circle class="sghub" cx="100" cy="104" r="7"></circle>
-</svg>
-<div class="spdreadout">
-<div class="spdrow"><span class="spdgear">N</span><span class="spdval">0</span></div>
-<span class="spdunit">mph</span>
-</div>
-</div>
-<div class="spdgpsbtn" title="GPS" data-icon="map-location-dot"></div>
-<div class="spdgps">
-<div class="gpsview"><div class="gpsplane"><div class="gpssea"></div><div class="gpsmap"><img class="gpsimg" alt=""></div></div></div>
-<div class="gpsfog"></div>
-<div class="gpscar"></div>
-<div class="gpsname"></div>
 </div>
 </div>
 <div class="dock">
@@ -442,6 +476,14 @@
 <div class="syncbar" data-active="0">
 <div class="sbtrack"><div class="sbsweep"></div></div>
 <span class="sbtext"></span>
+</div>
+<div class="updatebar" data-active="0">
+<span class="ubdot"></span>
+<span class="ubtext" title="What changed">Update available <b class="ubver"></b></span>
+<span class="ubstep"></span>
+<span class="ubfail"></span>
+<span class="ublink ubnotes" title="What changed">What&#8217;s new</span>
+<span class="ublink ubget" title="Download the new setup and run it">Install it now</span>
 </div>
 <div class="miniplayer" data-active="0">
 <div class="mpthumb"></div>
@@ -496,6 +538,10 @@
 <div class="item" data-id="events" title="Events happening now">
 <div class="glyph" data-icon="calendar-days"></div>
 <div class="label">Events</div>
+</div>
+<div class="item" data-id="groups" title="Clubs, teams and businesses">
+<div class="glyph" data-icon="user-group"></div>
+<div class="label">Groups</div>
 </div>
 <div class="item" data-id="review" title="Review Something">
 <div class="glyph" data-icon="star"></div>
@@ -571,14 +617,15 @@
 <div class="tabs"></div>
 <div class="foldertabs"></div>
 <div class="grid"></div>
+<div class="placesbody"></div>
 <div class="maphost">
 <div class="mapframe">
-<div class="mapstage"><img class="mapimg" alt=""><img class="mapworld" src="maps/world.png" alt=""><div class="maplabels"></div><div class="mapdot"><div class="maparrow"></div></div></div>
-<div class="mapviews"><div class="mapview" data-view="auto">Here</div><div class="mapview" data-view="main">World</div><div class="mapview" data-view="global">Planet</div></div>
+<div class="mapstage"><img class="mapimg" alt=""><img class="mapworld" src="maps/world.svg" alt=""><div class="maplabels"></div><div class="mapdot"><div class="maparrow"></div></div></div>
+<div class="mapviews"><div class="mapview" data-view="auto">Here</div><div class="mapview" data-view="main">World</div></div>
 <div class="mapzoombtns"><div class="mapzoom" data-dir="1">+</div><div class="mapzoom" data-dir="-1">&#8722;</div></div>
 </div>
 <div class="mapinfo"><span class="mapname"></span><span class="mapcoords"></span></div>
-<div class="mapcredit">Map data from Myrmex GPS. Island maps by There.</div>
+<div class="mapcredit">Map calibration from Myrmex GPS.</div>
 </div>
 <div class="folderprompt" data-active="0"></div>
 <div class="panelfooter">
@@ -587,7 +634,7 @@
 <div class="button placemark" title="Save where you are standing as a new favorite">&#128204; Bookmark here</div>
 <div class="button placeundo" title="Go back to where you teleported from">&#8617; Undo teleport</div>
 <div class="button placedel" title="Rename or delete favorites in the game's organizer">&#128465; Edit / Delete</div>
-<div class="button placecentral" title="Browse every public place on There Central">&#127758; All Places</div>
+<div class="button placecentral" title="Find any public place on There Central">&#128269; Search places</div>
 </div>
 <div class="footctls">
 <div class="quickequip" title="Quick equip: left-click a clothing card to wear/take off. Off: left-click opens the actions.">
@@ -604,6 +651,88 @@
 <span class="scaleglyph big">&#9632;</span>
 </div>
 </div>
+</div>
+</div>
+<div class="groupspanel">
+<div class="panelbar">
+<span class="paneltitle">Groups</span>
+<div class="revsearch grsearch"><input type="text" placeholder="Search groups (press Enter)&#8230;" spellcheck="false"></div>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="devtabs grtabs"></div>
+<div class="devbody grbody"></div>
+<div class="revfoot grfoot">
+<span class="revcount grcount"></span>
+<div class="button grrefresh" title="Check again">Refresh</div>
+<div class="button grsite" title="Groups on There Central, in the browser">There Central</div>
+</div>
+</div>
+<div class="webpanel">
+<div class="panelbar">
+<span class="paneltitle">There Central</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="devbody webbody"></div>
+<div class="revfoot webfoot">
+<span class="revcount webnote">Live from There Central</span>
+<div class="button webback" title="The page before this one">&#8249; Back</div>
+<div class="button website" title="Open this page in the browser">There Central</div>
+</div>
+</div>
+<div class="profilepanel">
+<div class="panelbar">
+<span class="paneltitle">Profile</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="devbody profbody"></div>
+<div class="revfoot proffoot">
+<span class="revcount profnote"></span>
+<div class="button profmine" title="Your own profile, where you can edit it">My profile</div>
+<div class="button profsite" title="Open this profile on There Central">There Central</div>
+</div>
+</div>
+<div class="eventspanel">
+<div class="panelbar">
+<span class="paneltitle">Events</span>
+<div class="revsearch evsearch"><input type="text" placeholder="Search events (press Enter)&#8230;" spellcheck="false"></div>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="devtabs evtabs"></div>
+<div class="lchips evcats"></div>
+<div class="devbody evbody"></div>
+<div class="revfoot evfoot">
+<span class="revcount evcount"></span>
+<div class="button evrefresh" title="Check again">Refresh</div>
+<div class="button" data-evurl="https://webapps.prod.there.com/activities/activities.xml" title="The Activities page on There Central">Activities page</div>
+</div>
+</div>
+<div class="developerpanel">
+<div class="panelbar">
+<span class="paneltitle">Developer</span>
+<div class="revsearch devsearch"><input type="text" placeholder="Search your submissions&#8230;" spellcheck="false"></div>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="devtabs"></div>
+<div class="devbody"></div>
+<div class="revfoot devfoot">
+<span class="revcount devcount"></span>
+<div class="button devrefresh" title="Check again">Refresh</div>
+<div class="button" data-devurl="https://webapps.prod.there.com/developers/developer_submissions.xml" title="Submit a new item on There Central">Submit item</div>
+<div class="button" data-devurl="https://webapps.prod.there.com/developers/developer_help.xml" title="Developer documentation on There Central">Docs</div>
+<div class="button" data-devurl="https://webapps.prod.there.com/wsgi-scripts/developer.py/profile" title="Your developer profile on There Central">Profile</div>
+</div>
+</div>
+<div class="reviewspanel">
+<div class="panelbar">
+<span class="paneltitle">Peer Review</span>
+<div class="revsearch"><input type="text" placeholder="Search submissions&#8230;" spellcheck="false"></div>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="revbody"></div>
+<div class="revfoot">
+<span class="revcount"></span>
+<div class="button revrefresh" title="Check for new submissions">Refresh</div>
+<div class="button revguide" title="The Peer Review Guidelines on There Central">Guidelines</div>
 </div>
 </div>
 <div class="volumepanel">
@@ -659,6 +788,9 @@
 <div class="button clearimgs" title="Forget every learned item and clothing image so they load fresh">&#128465; Clear image cache</div>
 </div>
 <div class="setnote syncstatus"></div>
+<div class="setsub">Requests to the game</div>
+<div class="sethint">The dock asks the game for item details in a queue, a few at a time, so a burst of them can't stall it. More at once loads faster; fewer is smoother. When the queue backs up, the bar above the dock says so.</div>
+<div class="lchips perflanes"></div>
 <div class="setsub">Folders backup</div>
 <div class="sethint">Your folders and the items in them are saved on this machine only, per avatar. Export a backup file before reinstalling There, then import it afterwards to restore them for this avatar.</div>
 <div class="setrow">
@@ -678,7 +810,23 @@
 <div class="instancepicks"></div>
 <div class="setnote musicnote"></div>
 </div>
+<div class="setsection">
+<div class="setheading">Updates</div>
+<div class="sethint">The dock asks GitHub for new releases every 15 minutes and puts a strip on the dock when one is out. <b>Show update</b> puts that strip up for the release that is out now, so the whole process can be tried from it: the setup downloads, offers to close There, installs and starts There again.</div>
+<div class="setrow">
+<div class="button updcheck" title="Ask GitHub for the newest release now">&#8635; Check now</div>
+<div class="button updforce" title="Show the update strip for the current release">&#11015; Show update</div>
 </div>
+<div class="setnote updnote"></div>
+</div>
+</div>
+</div>
+<div class="releasepanel">
+<div class="panelbar">
+<span class="paneltitle">What&#8217;s new</span>
+<div class="panelclose" title="Close">&#10005;</div>
+</div>
+<div class="relbody"></div>
 </div>
 <div class="aboutpanel">
 <div class="panelbar">
@@ -698,23 +846,20 @@
 <div class="aboutvalue"><a class="aboutlink" data-href="https://webapps.prod.there.com/profiles/profiles?AvatarDoid=48917330&amp;Mode=OutThere&amp;op=view" title="View DANKIES&#8217;s There profile">DANKIES</a></div>
 </div>
 <div class="aboutsection">
-<div class="aboutlabel">About</div>
-<div class="aboutvalue">
-A replacement for the game&#8217;s original Compass, Communicator and Message Bar.
-It also brings ChangeMe&#8217;s body and face editing into the Wardrobe, puts the volume
-sliders in the dock, gives the trade window a matching look, and ships rebuilt
-There Edge components that make the client noticeably smoother while its windows load.
-</div>
-</div>
-<div class="aboutsection">
 <div class="aboutlabel">Testers</div>
 <div class="aboutvalue">erick758, Edith, bubblegumgirl. Thank you for breaking things so nobody else has to.</div>
 </div>
 <div class="aboutsection">
 <div class="aboutlabel">Credits</div>
-<div class="aboutvalue">
-<b>hmphus</b>: BrowserProxy &amp; FlashProxy, part of
-<a class="aboutlink" data-href="https://github.com/hmphus/there-edge">There Edge</a> (<a class="aboutlink" data-href="https://github.com/hmphus/there-edge/blob/main/LICENSE.md">MIT License</a>).<br>Font Awesome Free by Fonticons, Inc. (<a class="aboutlink" data-href="https://fontawesome.com/license/free">CC BY 4.0</a>), shipped locally.<br>Notification sound by <b>Universfield</b>.<br>GIFs powered by <b>KLIPY</b>.<br>Music search and audio streams via <b>Piped</b>, an open source YouTube proxy (<a class="aboutlink" data-href="https://github.com/TeamPiped/Piped">GitHub</a>).<br>Map regions and calibration from <b>Myrmex GPS</b>; island map art by There.<br>Slash commands from <b>TheChaz</b>&#8217;s Command Bar list.</div>
+<div class="aboutvalue creditlist">
+<div><b>hmphus</b>: BrowserProxy &amp; FlashProxy, part of <a class="aboutlink" data-href="https://github.com/hmphus/there-edge">There Edge</a> (<a class="aboutlink" data-href="https://github.com/hmphus/there-edge/blob/main/LICENSE.md">MIT License</a>).</div>
+<div>Font Awesome Free by Fonticons, Inc. (<a class="aboutlink" data-href="https://fontawesome.com/license/free">CC BY 4.0</a>), shipped locally.</div>
+<div>Notification sound by <b>Universfield</b>.</div>
+<div>GIFs powered by <b>KLIPY</b>.</div>
+<div>Music search and audio streams via <b>Piped</b>, an open source YouTube proxy (<a class="aboutlink" data-href="https://github.com/TeamPiped/Piped">GitHub</a>).</div>
+<div>Map calibration from <b>Myrmex GPS</b> (an old Flash add-on from the early 2000s).</div>
+<div>Slash commands from <b>TheChaz</b>&#8217;s Command Bar list.</div>
+</div>
 </div>
 </div>
 </div>
@@ -821,6 +966,7 @@ There Edge components that make the client noticeably smoother while its windows
 <input type="text" class="ausearch" placeholder="Search auctions&#8230;" spellcheck="false">
 <div class="aucat" data-open="0"><span class="aucatlabel">Browse&#8230;</span><span class="aucatarrow">&#9662;</span></div>
 <div class="ausort" data-open="0"><span class="ausortlabel">Sort&#8230;</span><span class="aucatarrow">&#9662;</span></div>
+<div class="aumine" title="Auctions you've bid on or are selling">My auctions</div>
 <div class="aucatlist" data-open="0"></div>
 <div class="ausortlist" data-open="0"></div>
 </div>

@@ -85,10 +85,35 @@ const CatalogImages = {
 
   mediaUrl: function(filename) {
     if (CatalogImages.localLane && /^[A-Za-z0-9._-]+$/.test(filename)) {
+      // served by WebView2 itself when the DLL maps the store folder
+      if (There.data.vhost) {
+        return `https://tmui.img/${filename}`;
+      }
       const host = There.data.host || There.variables.there_resourceshost || '127.0.0.1:9999';
       return `http://${host}/tmui-img/${filename}`;
     }
     return CatalogImages.directUrl(filename);
+  },
+
+  // a photo the store didn't have: the DLL fetches it for next time (the
+  // old lane did that on the miss itself)
+  pending: [],
+  pendingTimer: null,
+  wantStore: function(url) {
+    const m = String(url || '').match(/tmui\.img\/([A-Za-z0-9._-]+)$/);
+    if (!m) {
+      return;
+    }
+    CatalogImages.pending.push(m[1]);
+    if (!CatalogImages.pendingTimer) {
+      CatalogImages.pendingTimer = setTimeout(function() {
+        CatalogImages.pendingTimer = null;
+        const files = CatalogImages.pending.splice(0, 80);
+        if (files.length) {
+          There.fsCommand('tmuiPrefetch', { files: files.join('|') });
+        }
+      }, 400);
+    }
   },
 
   directUrl: function(filename) {
@@ -97,7 +122,7 @@ const CatalogImages = {
 
   // a store url that failed -> the same photo straight from There
   fallbackUrl: function(url) {
-    const m = String(url || '').match(/\/tmui-img\/([A-Za-z0-9._-]+)$/);
+    const m = String(url || '').match(/(?:\/tmui-img\/|tmui\.img\/)([A-Za-z0-9._-]+)$/);
     return m ? CatalogImages.directUrl(m[1]) : null;
   },
 

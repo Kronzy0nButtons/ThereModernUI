@@ -3,19 +3,22 @@
 // Author: DANKIES
 //
 // This is the only place the version lives, build-installer.ps1 reads it too.
-// If GitHub has a newer release the page gets locked behind an overlay that
-// just links to the download. A failed check never locks anything.
+// If GitHub has a newer release, `available` goes true and the page's
+// onChange runs (the dock shows a strip at the top of its pill). Nothing is
+// locked, and a failed check changes nothing.
 
 const TmuiUpdate = {
-  version: '1.0.6',
+  version: '1.0.7',
   // owner/repo on GitHub, empty turns the check off
   repo: 'Kronzy0nButtons/ThereModernUI',
 
   CHECK_EVERY_MS: 15 * 60 * 1000,
   STORE_KEY: 'tmui.update',
-  blocked: false,
+  available: false,
   latest: null,
+  // the release page, and the setup exe on it when the release has one
   url: '',
+  download: '',
 
   // true if a > b, e.g. v1.2.10 > 1.2.9
   newer: function(a, b) {
@@ -44,47 +47,71 @@ const TmuiUpdate = {
     }
   },
 
-  // lock or unlock based on the latest version we know about
-  apply: function(latest, url) {
+  // settle `available` from the latest version we know about; the page hears
+  // about it when the answer (or the version on offer) changes
+  apply: function(latest, url, download) {
     TmuiUpdate.latest = latest;
     TmuiUpdate.url = url || `https://github.com/${TmuiUpdate.repo}/releases/latest`;
-    const block = !!latest && TmuiUpdate.newer(latest, TmuiUpdate.version);
-    if (block != TmuiUpdate.blocked) {
-      TmuiUpdate.blocked = block;
-      TmuiUpdate.render();
+    TmuiUpdate.download = download || '';
+    TmuiUpdate.available = !!latest && TmuiUpdate.newer(latest, TmuiUpdate.version);
+    const key = `${TmuiUpdate.available}:${TmuiUpdate.available ? latest : ''}`;
+    if (key != TmuiUpdate.shownKey) {
+      TmuiUpdate.shownKey = key;
       if (typeof TmuiUpdate.onChange == 'function') {
-        TmuiUpdate.onChange(block);
+        TmuiUpdate.onChange(TmuiUpdate.available);
       }
     }
   },
 
-  check: function() {
+  // the setup exe among the release's files, only from our own repo's downloads
+  setupAsset: function(rel) {
+    const base = `https://github.com/${TmuiUpdate.repo}/releases/download/`;
+    const asset = (rel.assets || []).find(a => /^ThereModernUI-Setup-.*\.exe$/i.test(a.name || '') && String(a.browser_download_url || '').startsWith(base));
+    return asset ? asset.browser_download_url : '';
+  },
+
+  // force skips the cached answer (Settings > Updates > Check now). onChecked,
+  // when a page sets it, hears whether GitHub answered
+  check: function(force) {
     if (!TmuiUpdate.repo) {
       return;
     }
     const cached = TmuiUpdate.load();
-    // use the cached answer first so a known update locks right away
+    // use the cached answer first so a known update shows right away
     if (cached.latest) {
-      TmuiUpdate.apply(cached.latest, cached.url);
+      TmuiUpdate.apply(cached.latest, cached.url, cached.download);
     }
-    if (cached.at && Date.now() - cached.at < TmuiUpdate.CHECK_EVERY_MS && !TmuiUpdate.blocked) {
+    if (!force && cached.at && Date.now() - cached.at < TmuiUpdate.CHECK_EVERY_MS && !TmuiUpdate.available) {
       return;
     }
+    const told = function(ok) {
+      if (typeof TmuiUpdate.onChecked == 'function') {
+        TmuiUpdate.onChecked(ok);
+      }
+    };
     fetch(`https://api.github.com/repos/${TmuiUpdate.repo}/releases/latest`, {
       headers: { Accept: 'application/vnd.github+json' },
     }).then(function(r) {
       return r.ok ? r.json() : null;
     }).then(function(rel) {
       if (!rel || !rel.tag_name) {
+        told(false);
         return;
       }
-      const data = { at: Date.now(), latest: rel.tag_name, url: rel.html_url || '' };
+      const data = {
+        at: Date.now(), latest: rel.tag_name, url: rel.html_url || '', download: TmuiUpdate.setupAsset(rel),
+        // the release notes, for the dock's What's new panel
+        name: rel.name || '', published: rel.published_at || '', notes: String(rel.body || '').slice(0, 60000),
+      };
       TmuiUpdate.save(data);
-      TmuiUpdate.apply(data.latest, data.url);
+      TmuiUpdate.apply(data.latest, data.url, data.download);
+      told(true);
     }).catch(function() {
+      told(false);
     });
   },
 
+  // the release page (notes) in the browser
   openRelease: function() {
     try {
       There.playSound('menu item activate');
@@ -93,60 +120,13 @@ const TmuiUpdate = {
     }
   },
 
-  // full page overlay
-  render: function() {
-    let el = document.querySelector('.tmui-update');
-    if (!TmuiUpdate.blocked) {
-      if (el) {
-        el.remove();
-      }
-      return;
+  // the setup exe itself, or the release page when there isn't one
+  openDownload: function() {
+    try {
+      There.playSound('menu item activate');
+      There.fsCommand('browser', TmuiUpdate.download || TmuiUpdate.url);
+    } catch (error) {
     }
-    if (!el) {
-      if (!document.querySelector('#tmui-update-style')) {
-        const style = document.createElement('style');
-        style.id = 'tmui-update-style';
-        style.textContent = `
-.tmui-update {
-  position:fixed; inset:0; z-index:100000;
-  display:flex; align-items:center; justify-content:center; flex-wrap:wrap;
-  gap:6px 12px; padding:8px 14px; box-sizing:border-box;
-  background:rgba(12, 15, 20, 0.94); border-radius:14px;
-  font:12px 'Segoe UI', system-ui, sans-serif; color:#e8edf2; text-align:center;
-  pointer-events:auto; user-select:none;
-}
-.tmui-update .tu-dot {
-  width:9px; height:9px; border-radius:50%;
-  background:var(--accent, #38bdf8); box-shadow:0 0 8px var(--accent, #38bdf8);
-}
-.tmui-update .tu-text b { color:var(--accent, #38bdf8); }
-.tmui-update .tu-hint { color:#93a1ae; font-size:11px; }
-.tmui-update .tu-btn {
-  padding:5px 14px; border-radius:12px; cursor:pointer; font-weight:700;
-  background:var(--accent, #38bdf8); color:#0b1620;
-}
-.tmui-update .tu-btn:hover { filter:brightness(1.12); }`;
-        document.head.appendChild(style);
-      }
-      el = document.createElement('div');
-      el.className = 'tmui-update';
-      el.innerHTML = '<span class="tu-dot"></span>' +
-        '<span class="tu-text">ThereModernUI <b class="tu-ver"></b> is out. Please update.</span>' +
-        '<span class="tu-btn">Download update</span>' +
-        '<span class="tu-hint">Close There, run the new setup, then start There again.</span>';
-      // eat all mouse input so nothing behind it works
-      ['mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'wheel'].forEach(function(type) {
-        el.addEventListener(type, function(event) {
-          event.stopPropagation();
-          if (type != 'click') {
-            event.preventDefault();
-          }
-        });
-      });
-      el.querySelector('.tu-btn').addEventListener('click', TmuiUpdate.openRelease);
-      document.body.appendChild(el);
-    }
-    el.querySelector('.tu-ver').textContent = TmuiUpdate.latest;
   },
 
   // called from each page's onReady

@@ -59,6 +59,11 @@ Source: "..\flashproxy\FlashProxy.modui.dll"; DestDir: "{app}"; DestName: "Flash
 ; licences
 Source: "..\licenses\*"; DestDir: "{app}\ThereModernUI\licenses"; Flags: ignoreversion
 
+[Run]
+; back into the game once the update is in (the dock's updater closed it),
+; with the arguments There's own shortcut starts it with
+Filename: "{app}\There.exe"; Parameters: "-U -l https://www.prod.there.com/status/min.html"; WorkingDir: "{app}"; Description: "Start There"; Flags: postinstall nowait skipifsilent
+
 [Code]
 const
   BackupSub = 'ThereModernUI\backup';
@@ -128,12 +133,150 @@ begin
   end;
 end;
 
+function GetCurrentProcessId: Cardinal; external 'GetCurrentProcessId@kernel32.dll stdcall';
+
+function InList(const List: array of Cardinal; Value: Cardinal): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 0 to GetArrayLength(List) - 1 do
+    if List[I] = Value then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+{ force-end There from this folder and everything it started. When the dock's
+  updater ran this setup, setup is itself one of There's children: setup and
+  the chain that started it are left alone }
+procedure KillThereTree(const Dir: String);
+var
+  Locator, Service, Procs, P: Variant;
+  Pids, Parents, Keep, Doomed: array of Cardinal;
+  Paths: array of String;
+  I, J, N, Code: Integer;
+  Cur: Cardinal;
+  Want: String;
+  Changed, Found: Boolean;
+begin
+  Want := Lowercase(AddBackslash(Dir) + 'There.exe');
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Service := Locator.ConnectServer('.', 'root\CIMV2');
+    Procs := Service.ExecQuery('SELECT ProcessId, ParentProcessId, ExecutablePath FROM Win32_Process');
+    N := Procs.Count;
+    SetArrayLength(Pids, N);
+    SetArrayLength(Parents, N);
+    SetArrayLength(Paths, N);
+    for I := 0 to N - 1 do
+    begin
+      P := Procs.ItemIndex(I);
+      Pids[I] := P.ProcessId;
+      Parents[I] := P.ParentProcessId;
+      if VarIsNull(P.ExecutablePath) then
+        Paths[I] := ''
+      else
+        Paths[I] := Lowercase(String(P.ExecutablePath));
+    end;
+  except
+    Exit;
+  end;
+
+  { setup's own chain, up to (not including) There }
+  SetArrayLength(Keep, 0);
+  Cur := GetCurrentProcessId;
+  for J := 0 to 15 do
+  begin
+    Found := False;
+    for I := 0 to N - 1 do
+      if Pids[I] = Cur then
+      begin
+        Found := True;
+        Break;
+      end;
+    if not Found or (Paths[I] = Want) then
+      Break;
+    SetArrayLength(Keep, GetArrayLength(Keep) + 1);
+    Keep[GetArrayLength(Keep) - 1] := Cur;
+    Cur := Parents[I];
+    if Cur = 0 then
+      Break;
+  end;
+
+  { There from this folder, then everything under it }
+  SetArrayLength(Doomed, 0);
+  for I := 0 to N - 1 do
+    if (Paths[I] = Want) and not InList(Keep, Pids[I]) then
+    begin
+      SetArrayLength(Doomed, GetArrayLength(Doomed) + 1);
+      Doomed[GetArrayLength(Doomed) - 1] := Pids[I];
+    end;
+  repeat
+    Changed := False;
+    for I := 0 to N - 1 do
+      if not InList(Doomed, Pids[I]) and InList(Doomed, Parents[I]) and not InList(Keep, Pids[I]) then
+      begin
+        SetArrayLength(Doomed, GetArrayLength(Doomed) + 1);
+        Doomed[GetArrayLength(Doomed) - 1] := Pids[I];
+        Changed := True;
+      end;
+  until not Changed;
+
+  { the youngest first, There last }
+  for I := GetArrayLength(Doomed) - 1 downto 0 do
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /PID ' + IntToStr(Doomed[I]), '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+{ three rounds of force-ending, each given five seconds to take }
+function CloseThereIn(const Dir: String): Boolean;
+var
+  Round, Waited: Integer;
+begin
+  for Round := 1 to 3 do
+  begin
+    KillThereTree(Dir);
+    Waited := 0;
+    while IsThereRunningIn(Dir) and (Waited < 5000) do
+    begin
+      Sleep(250);
+      Waited := Waited + 250;
+    end;
+    if not IsThereRunningIn(Dir) then
+      Break;
+  end;
+  Result := not IsThereRunningIn(Dir);
+  { the file handles go a moment after the process does }
+  if Result then
+    Sleep(1500);
+end;
+
 { returning a message here stops setup (works in silent mode too) }
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  if IsThereRunningIn(WizardDirValue) then
+  if not IsThereRunningIn(WizardDirValue) then
+    Exit;
+  if WizardSilent then
+  begin
     Result := 'There is running from this folder. Please close There completely and run setup again.';
+    Exit;
+  end;
+  if MsgBox('There is running from this folder and has to be closed to update.' + #13#10#13#10 +
+      'Close There now and carry on? Anything not saved in There is lost.',
+      mbConfirmation, MB_YESNO) <> IDYES then
+  begin
+    Result := 'There is still running. Please close There completely and run setup again.';
+    Exit;
+  end;
+  while not CloseThereIn(WizardDirValue) do
+    if MsgBox('There would not close. Close it from Task Manager if it is stuck, then press Retry.',
+        mbError, MB_RETRYCANCEL) <> IDRETRY then
+    begin
+      Result := 'There did not close. Please close it completely and run setup again.';
+      Exit;
+    end;
 end;
 
 function InitializeUninstall: Boolean;
@@ -213,6 +356,21 @@ begin
     { early test builds overwrote TheChaz's Command Bar }
     RetireFile('Resources\shortcutbar\shortcutbar2.js');
     RetireFile('Resources\shortcutbar\shortcutbar2.json');
+    { the map pictures became vector maps (maps\*.svg) }
+    RetireFile('Resources\compass\maps\aurora.png');
+    RetireFile('Resources\compass\maps\burojo.png');
+    RetireFile('Resources\compass\maps\cangrejo.png');
+    RetireFile('Resources\compass\maps\comet.png');
+    RetireFile('Resources\compass\maps\egypt.png');
+    RetireFile('Resources\compass\maps\frosty.png');
+    RetireFile('Resources\compass\maps\global.png');
+    RetireFile('Resources\compass\maps\kansas.png');
+    RetireFile('Resources\compass\maps\main.png');
+    RetireFile('Resources\compass\maps\motumotu.png');
+    RetireFile('Resources\compass\maps\saja.png');
+    RetireFile('Resources\compass\maps\tiki.png');
+    RetireFile('Resources\compass\maps\tyr.png');
+    RetireFile('Resources\compass\maps\world.png');
   end;
 end;
 

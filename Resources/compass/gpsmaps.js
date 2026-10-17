@@ -2,13 +2,17 @@
 // Where am I? Turns a world position into a map picture and a spot on it.
 // Author: DANKIES
 //
-// The region boxes and pixel calibration come from Myrmex GPS (gps.swf,
-// 2007); the island pictures in maps/ are There's own map art from that file. The world is a sphere of radius 6,000,000 (the position feed's
+// The pixel calibration comes from Myrmex GPS (gps.swf, 2007); the island
+// maps in maps/ are ThereModernUI's own vector maps.
+// The world is a sphere of radius 6,000,000 (the position feed's
 // units): x/z gives east-west, y against the x-z distance gives north-south,
 // each as an arc length on the surface. Height is distance from the centre
 // minus the radius.
 
 const TmuiMaps = {
+  // where the map pictures come from; the dock points this at WebView2's
+  // own folder mapping when the DLL has one
+  base: '',
   RADIUS: 6000000,
 
   // first match wins, same order as the original. box: x and y ranges in
@@ -81,7 +85,7 @@ const TmuiMaps = {
       return {
         id: 'global',
         name: 'Planet',
-        src: 'maps/global.png',
+        src: TmuiMaps.base + 'maps/global.svg',
         px: Math.floor((pos[0] + TmuiMaps.RADIUS) / 80000) + 25,
         py: Math.floor((TmuiMaps.RADIUS - pos[1]) / 80000),
         inside: true,
@@ -93,7 +97,7 @@ const TmuiMaps = {
     return {
       id: r.id,
       name: r.name,
-      src: `maps/${r.id}.png`,
+      src: `${TmuiMaps.base}maps/${r.id}.svg`,
       px: Math.floor((s.x + r.ox) / r.sx),
       py: Math.floor((r.oy - s.y) / r.sy),
       inside: pos[2] > 0 && s.x >= r.x[0] && s.x <= r.x[1] && s.y >= r.y[0] && s.y <= r.y[1],
@@ -137,7 +141,7 @@ const TmuiMaps = {
           return {
             id: r.id,
             name: r.name,
-            src: `maps/${r.id}.png`,
+            src: `${TmuiMaps.base}maps/${r.id}.svg`,
             px: Math.floor((s.x + r.ox) / r.sx),
             py: Math.floor((r.oy - s.y) / r.sy),
             height: s.height,
@@ -150,7 +154,7 @@ const TmuiMaps = {
     return {
       id: 'global',
       name: 'Open sea',
-      src: 'maps/global.png',
+      src: TmuiMaps.base + 'maps/global.svg',
       px: Math.floor((pos[0] + TmuiMaps.RADIUS) / 80000) + 25,
       py: Math.floor((TmuiMaps.RADIUS - pos[1]) / 80000),
       height: s.height,
